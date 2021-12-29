@@ -1,0 +1,608 @@
+/*
+Работа с kafka
+
+Используется библиотека github.com/confluentinc/confluent-kafka-go/kafka, основанная на нативном клиенте.
+
+Так как под windows такового нет, то под ними работать не будет. Ну и не надо.
+Но если приспичит, есть другие библиотеки, где клиент реализован на go. Но они, по очевидным причинам, сильно медленнее и прожорливее по памяти.
+*/
+package kafka
+
+import (
+	"context"
+	"errors"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/confluentinc/confluent-kafka-go/kafka"
+
+	"github.com/alrusov/config"
+	"github.com/alrusov/misc"
+)
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+type (
+	// Конфигурация
+	Config struct {
+		Servers string `toml:"servers"` // Список kafka серверов
+
+		User     string `toml:"user"`     // Пользователь
+		Password string `toml:"password"` // Пароль
+
+		TimeoutS string        `toml:"timeout"` // Строчное представление таймаута
+		Timeout  time.Duration `toml:"-"`       // Таймаут
+
+		Group string `toml:"group"` // Группа для консьюмера
+
+		Topics map[string]*TopicConfig `toml:"topics"` // Список топиков продюсера с их параметрами
+	}
+
+	// Параметры топика
+	TopicConfig struct {
+		Key               string `toml:"-"`                  // Имя в списке (дублируется ключ из Config.Topics)
+		Name              string `toml:"name"`               // Имя топика
+		NumPartitions     int    `toml:"num-partitions"`     // Количество партиций при создании
+		ReplicationFactor int    `toml:"replication-factor"` // Фактор репликации при создании
+
+		RetentionTimeS string        `toml:"retention-time"` // Строчное представление времени жизни для данных
+		RetentionTime  time.Duration `toml:"-"`              // Время жизни для данных
+
+		RetentionSize int64 `toml:"retention-size"` // Максимальный размер для очистки по размеру
+	}
+
+	// Админский клиент
+	AdminClient struct {
+		mutex     *sync.Mutex        // as is
+		cfg       *Config            // Конфигурация
+		timeoutMS int                // Таймаут в МИЛЛИСЕКУНДАХ
+		conn      *kafka.AdminClient // Соединение
+	}
+
+	// Продюсер
+	Producer struct {
+		mutex     *sync.Mutex     // as is
+		cfg       *Config         // Конфигурация
+		timeoutMS int             // Таймаут в МИЛЛИСЕКУНДАХ
+		conn      *kafka.Producer // Соединение
+	}
+
+	// Консьюмер
+	Consumer struct {
+		mutex     *sync.Mutex     // as is
+		cfg       *Config         // Конфигурация
+		timeoutMS int             // Таймаут в МИЛЛИСЕКУНДАХ
+		conn      *kafka.Consumer // Соединение
+	}
+
+	// Метаданные
+	Metadata kafka.Metadata
+
+	// Сообщение
+	Message kafka.Message
+
+	// Набор сообщений
+	Messages []Message
+
+	// Смещение
+	Offset kafka.Offset
+)
+
+const (
+	// Смешение - начало
+	OffsetBeginning = Offset(kafka.OffsetBeginning)
+	// Смещение - конец
+	OffsetEnd = Offset(kafka.OffsetEnd)
+	// Смещение - сохраненное в kafka
+	OffsetStored = Offset(kafka.OffsetStored)
+)
+
+var (
+	// Ошибка - конец данных
+	ErrorEOF = errors.New("EOF reached")
+	// Ошибка - нет данных
+	ErrorNoData = errors.New("no data found")
+)
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Версия нативной библиотки
+func LibraryVersion() (version string) {
+	_, version = kafka.LibraryVersion()
+	return
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Проверка валидности Config
+func (c *Config) Check(cfg interface{}) (err error) {
+	msgs := misc.NewMessages()
+
+	if c.Servers == "" {
+		msgs.Add(`Undefined kafka.servers`)
+	}
+
+	c.Timeout, err = misc.Interval2Duration(c.TimeoutS)
+	if err != nil {
+		msgs.Add(`kafka.timeout: %s`, err)
+	}
+	if c.Timeout <= 0 {
+		c.Timeout = config.ClientDefaultTimeout
+	}
+
+	for key, topic := range c.Topics {
+		topic.Key = key
+		err = topic.Check(cfg)
+		if err != nil {
+			msgs.Add("kafka.topics[%s]: %s", key, err)
+			continue
+		}
+	}
+
+	return msgs.Error()
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Проверка валидности TopicConfig
+func (c *TopicConfig) Check(cfg interface{}) (err error) {
+	msgs := misc.NewMessages()
+
+	if c.NumPartitions <= 0 {
+		c.NumPartitions = 1
+	}
+
+	if c.ReplicationFactor <= 0 {
+		c.ReplicationFactor = 1
+	}
+
+	c.RetentionTime, err = misc.Interval2Duration(c.RetentionTimeS)
+	if err != nil {
+		msgs.Add(`kafka.topic[%s]: %s`, c.Key, err)
+	}
+	if c.RetentionTime <= 0 {
+		c.RetentionTime = -1
+	}
+
+	if c.RetentionSize <= 0 {
+		c.RetentionSize = -1
+	}
+
+	return msgs.Error()
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Создать набор параметров для соединения
+func (c *Config) makeConfigMap(isConsumer bool) (config *kafka.ConfigMap) {
+	config = &kafka.ConfigMap{
+		"bootstrap.servers": c.Servers,
+		"client.id":         c.User,
+		"sasl.password":     c.Password,
+		"compression.codec": "gzip",
+	}
+
+	if isConsumer {
+		(*config)["group.id"] = c.Group
+	}
+
+	return
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Привести таймаут к миллисекунды в конфиге
+func (c *Config) timeMS() int {
+	return timeMS(c.Timeout)
+}
+
+// Привести таймаут к миллисекунды
+func timeMS(timeout time.Duration) int {
+	return int(timeout / time.Millisecond)
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Создать новое админское соединение
+func (c *Config) NewAdmin() (client *AdminClient, err error) {
+	if inTest {
+		return &AdminClient{
+			mutex:     new(sync.Mutex),
+			cfg:       c,
+			timeoutMS: c.timeMS(),
+			conn:      nil,
+		}, nil
+	}
+
+	conn, err := kafka.NewAdminClient(c.makeConfigMap(false))
+	if err != nil {
+		return
+	}
+
+	client = &AdminClient{
+		mutex:     new(sync.Mutex),
+		cfg:       c,
+		timeoutMS: c.timeMS(),
+		conn:      conn,
+	}
+
+	return
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Закрыть админское соединение
+func (c *AdminClient) Close() {
+	if inTest {
+		return
+	}
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	c.conn.Close()
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Получить метаданные для топика. Если передано пустое имя, то всех.
+func (c *AdminClient) GetMetadata(topic string) (m *Metadata, err error) {
+	if inTest {
+		return &Metadata{}, nil
+	}
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	pTopic := &topic
+	allTopics := topic == ""
+	if allTopics {
+		pTopic = nil
+	}
+
+	km, err := c.conn.GetMetadata(pTopic, allTopics, c.timeoutMS)
+	if err != nil {
+		return
+	}
+
+	m = (*Metadata)(km)
+	return
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Создать топик
+func (c *AdminClient) CreateTopic(topic *TopicConfig) (err error) {
+	if inTest {
+		return nil
+	}
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	config := make(misc.StringMap, 16)
+	if topic.RetentionTime > 0 {
+		config["retention.ms"] = strconv.FormatInt(int64(timeMS(topic.RetentionTime)), 10)
+	}
+	if topic.RetentionSize > 0 {
+		config["retention.bytes"] = strconv.FormatInt(topic.RetentionSize, 10)
+	}
+
+	_, err = c.conn.CreateTopics(
+		context.Background(),
+		[]kafka.TopicSpecification{
+			{
+				Topic:             topic.Name,
+				NumPartitions:     topic.NumPartitions,
+				ReplicationFactor: topic.ReplicationFactor,
+				Config:            config,
+			},
+		},
+		kafka.SetAdminOperationTimeout(c.cfg.Timeout),
+	)
+
+	return
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Удалить топик
+func (c *AdminClient) DeleteTopic(topic string) (err error) {
+	if inTest {
+		return nil
+	}
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	_, err = c.conn.DeleteTopics(
+		context.Background(),
+		[]string{
+			topic,
+		},
+		kafka.SetAdminOperationTimeout(c.cfg.Timeout),
+	)
+
+	return
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Создать новое продюсерское соединение
+func (c *Config) NewProducer() (client *Producer, err error) {
+	if inTest {
+		return &Producer{
+			mutex:     new(sync.Mutex),
+			cfg:       c,
+			timeoutMS: c.timeMS(),
+			conn:      nil,
+		}, nil
+	}
+
+	conn, err := kafka.NewProducer(c.makeConfigMap(false))
+	if err != nil {
+		return
+	}
+
+	client = &Producer{
+		mutex:     new(sync.Mutex),
+		cfg:       c,
+		timeoutMS: c.timeMS(),
+		conn:      conn,
+	}
+
+	return
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Закрыть продюсерское соединение
+func (c *Producer) Close() {
+	if inTest {
+		return
+	}
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	c.conn.Close()
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Сохранить сообщения в kafka
+func (c *Producer) SaveMessages(m Messages) (err error) {
+	if inTest {
+		return nil
+	}
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	msgs := misc.NewMessages()
+
+	go func() {
+		for e := range c.conn.Events() {
+			switch ev := e.(type) {
+			case *kafka.Message:
+				if ev.TopicPartition.Error != nil {
+					msgs.Add("Delivery to %s failed: %s", *ev.TopicPartition.Topic, ev.TopicPartition.Error)
+				}
+			}
+		}
+	}()
+
+	for _, msg := range m {
+		msg := msg
+		err := c.conn.Produce((*kafka.Message)(&msg), nil)
+		if err != nil {
+			msgs.AddError(err)
+		}
+
+	}
+
+	n := c.conn.Flush(c.timeoutMS)
+	if n != 0 {
+		c.conn.Purge(kafka.PurgeQueue | kafka.PurgeInFlight | kafka.PurgeNonBlocking) // будем делать повторы самостоятельно
+		msgs.Add("%d events still un-flushed", n)
+	}
+
+	err = msgs.Error()
+	return
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Создать сообщение
+func NewMessage(topic string, key []byte, value []byte) Message {
+	return Message{
+		TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
+		Key:            key,
+		Value:          value,
+	}
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Создать новое консьюмерское соединение
+func (c *Config) NewConsumer() (client *Consumer, err error) {
+	if inTest {
+		return &Consumer{
+			mutex:     new(sync.Mutex),
+			cfg:       c,
+			timeoutMS: c.timeMS(),
+			conn:      nil,
+		}, nil
+	}
+
+	conn, err := kafka.NewConsumer(c.makeConfigMap(true))
+	if err != nil {
+		return
+	}
+
+	client = &Consumer{
+		mutex:     new(sync.Mutex),
+		cfg:       c,
+		timeoutMS: c.timeMS(),
+		conn:      conn,
+	}
+
+	return
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Закрыть консьюмерское соединение
+func (c *Consumer) Close() {
+	if inTest {
+		return
+	}
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	c.conn.Close()
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Подписаться на топики по списку
+func (c *Consumer) Subscribe(topics []string) (err error) {
+	if inTest {
+		return nil
+	}
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	list := make([]kafka.TopicPartition, len(topics))
+
+	for i, topic := range topics {
+		topic := topic
+		list[i] = kafka.TopicPartition{
+			Topic: &topic,
+		}
+	}
+
+	return c.conn.Assign(list)
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Получить текущие смещения для списка топиков
+func (c *Consumer) Offsets(topics []string) (offsets []Offset, err error) {
+	if inTest {
+		return make([]Offset, len(topics)), nil
+	}
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	list := make([]kafka.TopicPartition, len(topics))
+
+	for i, topic := range topics {
+		topic := topic
+		list[i] = kafka.TopicPartition{
+			Topic: &topic,
+		}
+	}
+
+	tp, err := c.conn.Committed(list, c.timeoutMS)
+	if err != nil {
+		return
+	}
+
+	offsets = make([]Offset, len(tp))
+
+	for i, t := range tp {
+		offsets[i] = Offset(t.Offset)
+	}
+
+	return
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Установить указатель чтения для топика
+func (c *Consumer) Seek(topic string, offset Offset) (err error) {
+	if inTest {
+		return nil
+	}
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	return c.conn.Seek(
+		kafka.TopicPartition{
+			Topic:     &topic,
+			Partition: 0,
+			Offset:    kafka.Offset(offset),
+		},
+		c.timeoutMS,
+	)
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Получить сообщение из топика, если оно там есть
+func (c *Consumer) Read(timeout time.Duration) (message *Message, err error) {
+	if inTest {
+		return nil, ErrorNoData
+	}
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	tMS := c.timeoutMS
+
+	if timeout > 0 {
+		tMS = timeMS(timeout)
+	}
+
+	ev := c.conn.Poll(tMS)
+
+	switch e := ev.(type) {
+	case *kafka.Message:
+		message = (*Message)(e)
+
+	case kafka.PartitionEOF:
+		err = ErrorEOF
+
+	case kafka.Error:
+		err = e
+
+	default:
+		err = ErrorNoData
+	}
+
+	return
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Зафиксировать последнюю прочитанную позицию для топика
+func (c *Consumer) Commit(message *Message) (err error) {
+	if inTest {
+		return nil
+	}
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	_, err = c.conn.CommitMessage((*kafka.Message)(message))
+	return
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+var (
+	inTest = false
+)
+
+// Переключиться в тестовый режим
+func SwitchToTest() {
+	inTest = true
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//

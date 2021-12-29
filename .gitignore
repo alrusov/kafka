@@ -1,0 +1,32 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, build with `go test -c`
+*.test
+*.test.exe
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+*.tmp
+*.log
+
+.env
+
+_extra/
+logs/
+*.log
+
+TODO
+LAST_BUILD
+Makefile.private
+
+debug
+debug.test
+__debug_bin
+
+*.dump
