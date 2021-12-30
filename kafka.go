@@ -34,22 +34,28 @@ type (
 		TimeoutS string        `toml:"timeout"` // Строчное представление таймаута
 		Timeout  time.Duration `toml:"-"`       // Таймаут
 
-		Group string `toml:"group"` // Группа для консьюмера
+		Group string `toml:"group"` // Группа для консюмера
 
-		Topics map[string]*TopicConfig `toml:"topics"` // Список топиков продюсера с их параметрами
+		ProducerTopics map[string]*ProducerTopicConfig `toml:"producer-topics"` // Список топиков продюсера с их параметрами
+		ConsumerTopics map[string]*ConsumerTopicConfig `toml:"consumer-topics"` // Список топиков консюмера с их параметрами
 	}
 
-	// Параметры топика
-	TopicConfig struct {
-		Key               string `toml:"-"`                  // Имя в списке (дублируется ключ из Config.Topics)
-		Name              string `toml:"name"`               // Имя топика
-		NumPartitions     int    `toml:"num-partitions"`     // Количество партиций при создании
-		ReplicationFactor int    `toml:"replication-factor"` // Фактор репликации при создании
+	// Параметры топика продюсера
+	ProducerTopicConfig struct {
+		Name string `toml:"name"` // Имя топика
 
-		RetentionTimeS string        `toml:"retention-time"` // Строчное представление времени жизни для данных
-		RetentionTime  time.Duration `toml:"-"`              // Время жизни для данных
+		NumPartitions     int `toml:"num-partitions"`     // Количество партиций при создании
+		ReplicationFactor int `toml:"replication-factor"` // Фактор репликации при создании
+
+		RetentionTimeS string        `toml:"retention-time"` // Строчное представление времени жизни данных
+		RetentionTime  time.Duration `toml:"-"`              // Время жизни данных
 
 		RetentionSize int64 `toml:"retention-size"` // Максимальный размер для очистки по размеру
+	}
+
+	// Параметры топика консюмера
+	ConsumerTopicConfig struct {
+		Name string `toml:"name"` // Имя топика
 	}
 
 	// Админский клиент
@@ -68,7 +74,7 @@ type (
 		conn      *kafka.Producer // Соединение
 	}
 
-	// Консьюмер
+	// консюмер
 	Consumer struct {
 		mutex     *sync.Mutex     // as is
 		cfg       *Config         // Конфигурация
@@ -131,11 +137,18 @@ func (c *Config) Check(cfg interface{}) (err error) {
 		c.Timeout = config.ClientDefaultTimeout
 	}
 
-	for key, topic := range c.Topics {
-		topic.Key = key
+	for key, topic := range c.ProducerTopics {
 		err = topic.Check(cfg)
 		if err != nil {
-			msgs.Add("kafka.topics[%s]: %s", key, err)
+			msgs.Add("kafka.producer-topics[%s]: %s", key, err)
+			continue
+		}
+	}
+
+	for key, topic := range c.ConsumerTopics {
+		err = topic.Check(cfg)
+		if err != nil {
+			msgs.Add("kafka.consumer-topics[%s]: %s", key, err)
 			continue
 		}
 	}
@@ -145,9 +158,13 @@ func (c *Config) Check(cfg interface{}) (err error) {
 
 //----------------------------------------------------------------------------------------------------------------------------//
 
-// Проверка валидности TopicConfig
-func (c *TopicConfig) Check(cfg interface{}) (err error) {
+// Проверка валидности ProducerTopicConfig
+func (c *ProducerTopicConfig) Check(cfg interface{}) (err error) {
 	msgs := misc.NewMessages()
+
+	if c.Name == "" {
+		msgs.Add("empty name")
+	}
 
 	if c.NumPartitions <= 0 {
 		c.NumPartitions = 1
@@ -159,7 +176,7 @@ func (c *TopicConfig) Check(cfg interface{}) (err error) {
 
 	c.RetentionTime, err = misc.Interval2Duration(c.RetentionTimeS)
 	if err != nil {
-		msgs.Add(`kafka.topic[%s]: %s`, c.Key, err)
+		msgs.AddError(err)
 	}
 	if c.RetentionTime <= 0 {
 		c.RetentionTime = -1
@@ -167,6 +184,19 @@ func (c *TopicConfig) Check(cfg interface{}) (err error) {
 
 	if c.RetentionSize <= 0 {
 		c.RetentionSize = -1
+	}
+
+	return msgs.Error()
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+// Проверка валидности ProducerTopicConfig
+func (c *ConsumerTopicConfig) Check(cfg interface{}) (err error) {
+	msgs := misc.NewMessages()
+
+	if c.Name == "" {
+		msgs.Add("empty name")
 	}
 
 	return msgs.Error()
@@ -273,7 +303,7 @@ func (c *AdminClient) GetMetadata(topic string) (m *Metadata, err error) {
 //----------------------------------------------------------------------------------------------------------------------------//
 
 // Создать топик
-func (c *AdminClient) CreateTopic(topic *TopicConfig) (err error) {
+func (c *AdminClient) CreateTopic(topic *ProducerTopicConfig) (err error) {
 	if inTest {
 		return nil
 	}
@@ -425,7 +455,7 @@ func NewMessage(topic string, key []byte, value []byte) Message {
 
 //----------------------------------------------------------------------------------------------------------------------------//
 
-// Создать новое консьюмерское соединение
+// Создать новое консюмерское соединение
 func (c *Config) NewConsumer() (client *Consumer, err error) {
 	if inTest {
 		return &Consumer{
@@ -453,7 +483,7 @@ func (c *Config) NewConsumer() (client *Consumer, err error) {
 
 //----------------------------------------------------------------------------------------------------------------------------//
 
-// Закрыть консьюмерское соединение
+// Закрыть консюмерское соединение
 func (c *Consumer) Close() {
 	if inTest {
 		return
