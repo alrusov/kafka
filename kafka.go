@@ -18,6 +18,7 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 
 	"github.com/alrusov/config"
+	"github.com/alrusov/log"
 	"github.com/alrusov/misc"
 )
 
@@ -36,8 +37,11 @@ type (
 
 		Group string `toml:"group"` // Группа для консюмера
 
-		ProducerTopics map[string]*ProducerTopicConfig `toml:"producer-topics"` // Список топиков продюсера с их параметрами
-		ConsumerTopics map[string]*ConsumerTopicConfig `toml:"consumer-topics"` // Список топиков консюмера с их параметрами
+		ProducerTopics map[string]*ProducerTopicConfig `toml:"producer-topics"` // Список топиков продюсера с их параметрами map[virtualName]*config
+		ConsumerTopics map[string]*ConsumerTopicConfig `toml:"consumer-topics"` // Список топиков консюмера с их параметрами map[virtualName]*config
+
+		RevProducerTopics misc.StringMap `toml:"-"` // Обратное соответствие map[topicName]virtualName
+		RevConsumerTopics misc.StringMap `toml:"-"` // Обратное соответствие map[topicName]virtualName
 	}
 
 	// Параметры топика продюсера
@@ -51,11 +55,15 @@ type (
 		RetentionTime  time.Duration `toml:"-"`              // Время жизни данных
 
 		RetentionSize int64 `toml:"retention-size"` // Максимальный размер для очистки по размеру
+
+		Extra interface{} `toml:"extra"` // Произвольные дополнительные данные
 	}
 
 	// Параметры топика консюмера
 	ConsumerTopicConfig struct {
 		Name string `toml:"name"` // Имя топика
+
+		Extra interface{} `toml:"extra"` // Произвольные дополнительные данные
 	}
 
 	// Админский клиент
@@ -105,6 +113,9 @@ const (
 )
 
 var (
+	// Log facility
+	Log = log.NewFacility("kafka")
+
 	// Ошибка - конец данных
 	ErrorEOF = errors.New("EOF reached")
 	// Ошибка - нет данных
@@ -137,13 +148,19 @@ func (c *Config) Check(cfg interface{}) (err error) {
 		c.Timeout = config.ClientDefaultTimeout
 	}
 
+	c.RevProducerTopics = make(misc.StringMap, len(c.ProducerTopics))
+
 	for key, topic := range c.ProducerTopics {
 		err = topic.Check(cfg)
 		if err != nil {
 			msgs.Add("kafka.producer-topics[%s]: %s", key, err)
 			continue
 		}
+
+		c.RevProducerTopics[topic.Name] = key
 	}
+
+	c.RevConsumerTopics = make(misc.StringMap, len(c.ConsumerTopics))
 
 	for key, topic := range c.ConsumerTopics {
 		err = topic.Check(cfg)
@@ -151,6 +168,8 @@ func (c *Config) Check(cfg interface{}) (err error) {
 			msgs.Add("kafka.consumer-topics[%s]: %s", key, err)
 			continue
 		}
+
+		c.RevConsumerTopics[topic.Name] = key
 	}
 
 	return msgs.Error()
@@ -215,6 +234,7 @@ func (c *Config) makeConfigMap(isConsumer bool) (config *kafka.ConfigMap) {
 
 	if isConsumer {
 		(*config)["group.id"] = c.Group
+		//(*config)["go.application.rebalance.enable"] = true
 	}
 
 	return
@@ -515,7 +535,22 @@ func (c *Consumer) Subscribe(topics []string) (err error) {
 		}
 	}
 
-	return c.conn.Assign(list)
+	return c.subscribeTopics(topics)
+}
+
+func (c *Consumer) subscribeTopics(topics []string) (err error) {
+	c.conn.SubscribeTopics(topics,
+		func(kc *kafka.Consumer, e kafka.Event) (err error) {
+			Log.Message(log.DEBUG, `Event "%T" reached (%#v)`, e, e)
+			switch e.(type) {
+			case kafka.TopicPartition:
+			case kafka.RevokedPartitions:
+			}
+			return
+		},
+	)
+
+	return
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
