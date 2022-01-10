@@ -234,7 +234,7 @@ func (c *Config) makeConfigMap(isConsumer bool) (config *kafka.ConfigMap) {
 
 	if isConsumer {
 		(*config)["group.id"] = c.Group
-		//(*config)["go.application.rebalance.enable"] = true
+		(*config)["go.application.rebalance.enable"] = true
 	}
 
 	return
@@ -544,6 +544,7 @@ func (c *Consumer) subscribeTopics(topics []string) (err error) {
 			Log.Message(log.DEBUG, `Event "%T" reached (%#v)`, e, e)
 			switch e.(type) {
 			case kafka.TopicPartition:
+			case kafka.AssignedPartitions:
 			case kafka.RevokedPartitions:
 			}
 			return
@@ -551,6 +552,11 @@ func (c *Consumer) subscribeTopics(topics []string) (err error) {
 	)
 
 	return
+}
+
+// Отписаться от всех подписок
+func (c *Consumer) Unsubscribe() (err error) {
+	return c.conn.Unsubscribe()
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
