@@ -11,6 +11,7 @@ package kafka
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -35,10 +36,10 @@ type (
 		TimeoutS string        `toml:"timeout"` // Строчное представление таймаута
 		Timeout  time.Duration `toml:"-"`       // Таймаут
 
-		Group string `toml:"group"` // Группа для консюмера
+		Group string `toml:"group"` // Группа для консьюмера
 
 		ProducerTopics map[string]*ProducerTopicConfig `toml:"producer-topics"` // Список топиков продюсера с их параметрами map[virtualName]*config
-		ConsumerTopics map[string]*ConsumerTopicConfig `toml:"consumer-topics"` // Список топиков консюмера с их параметрами map[virtualName]*config
+		ConsumerTopics map[string]*ConsumerTopicConfig `toml:"consumer-topics"` // Список топиков консьюмера с их параметрами map[virtualName]*config
 
 		RevProducerTopics misc.StringMap `toml:"-"` // Обратное соответствие map[topicName]virtualName
 		RevConsumerTopics misc.StringMap `toml:"-"` // Обратное соответствие map[topicName]virtualName
@@ -46,7 +47,8 @@ type (
 
 	// Параметры топика продюсера
 	ProducerTopicConfig struct {
-		Name string `toml:"name"` // Имя топика
+		Name   string `toml:"name"`   // Имя топика
+		Active bool   `toml:"active"` // Активный?
 
 		NumPartitions     int `toml:"num-partitions"`     // Количество партиций при создании
 		ReplicationFactor int `toml:"replication-factor"` // Фактор репликации при создании
@@ -59,9 +61,10 @@ type (
 		Extra interface{} `toml:"extra"` // Произвольные дополнительные данные
 	}
 
-	// Параметры топика консюмера
+	// Параметры топика консьюмера
 	ConsumerTopicConfig struct {
-		Name string `toml:"name"` // Имя топика
+		Name   string `toml:"name"`   // Имя топика
+		Active bool   `toml:"active"` // Активный?
 
 		Extra interface{} `toml:"extra"` // Произвольные дополнительные данные
 	}
@@ -82,7 +85,7 @@ type (
 		conn      *kafka.Producer // Соединение
 	}
 
-	// консюмер
+	// консьюмер
 	Consumer struct {
 		mutex     *sync.Mutex     // as is
 		cfg       *Config         // Конфигурация
@@ -101,6 +104,9 @@ type (
 
 	// Смещение
 	Offset kafka.Offset
+
+	// Ошибка
+	Error kafka.Error
 )
 
 const (
@@ -117,9 +123,7 @@ var (
 	Log = log.NewFacility("kafka")
 
 	// Ошибка - конец данных
-	ErrorEOF = errors.New("EOF reached")
-	// Ошибка - нет данных
-	ErrorNoData = errors.New("no data found")
+	PartitionEOF = errors.New("partition EOF")
 )
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -128,6 +132,12 @@ var (
 func LibraryVersion() (version string) {
 	_, version = kafka.LibraryVersion()
 	return
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+func (e Error) Error() string {
+	return kafka.Error(e).String()
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -157,6 +167,11 @@ func (c *Config) Check(cfg interface{}) (err error) {
 			continue
 		}
 
+		if !topic.Active {
+			delete(c.ProducerTopics, key)
+			continue
+		}
+
 		c.RevProducerTopics[topic.Name] = key
 	}
 
@@ -166,6 +181,11 @@ func (c *Config) Check(cfg interface{}) (err error) {
 		err = topic.Check(cfg)
 		if err != nil {
 			msgs.Add("kafka.consumer-topics[%s]: %s", key, err)
+			continue
+		}
+
+		if !topic.Active {
+			delete(c.ConsumerTopics, key)
 			continue
 		}
 
@@ -229,12 +249,13 @@ func (c *Config) makeConfigMap(isConsumer bool) (config *kafka.ConfigMap) {
 		"bootstrap.servers": c.Servers,
 		"client.id":         c.User,
 		"sasl.password":     c.Password,
-		"compression.codec": "gzip",
 	}
 
 	if isConsumer {
 		(*config)["group.id"] = c.Group
 		(*config)["go.application.rebalance.enable"] = true
+	} else {
+		(*config)["compression.codec"] = "gzip"
 	}
 
 	return
@@ -475,7 +496,7 @@ func NewMessage(topic string, key []byte, value []byte) Message {
 
 //----------------------------------------------------------------------------------------------------------------------------//
 
-// Создать новое консюмерское соединение
+// Создать новое консьюмерское соединение
 func (c *Config) NewConsumer() (client *Consumer, err error) {
 	if inTest {
 		return &Consumer{
@@ -503,7 +524,7 @@ func (c *Config) NewConsumer() (client *Consumer, err error) {
 
 //----------------------------------------------------------------------------------------------------------------------------//
 
-// Закрыть консюмерское соединение
+// Закрыть консьюмерское соединение
 func (c *Consumer) Close() {
 	if inTest {
 		return
@@ -619,7 +640,7 @@ func (c *Consumer) Seek(topic string, offset Offset) (err error) {
 // Получить сообщение из топика, если оно там есть
 func (c *Consumer) Read(timeout time.Duration) (message *Message, err error) {
 	if inTest {
-		return nil, ErrorNoData
+		return nil, nil
 	}
 
 	c.mutex.Lock()
@@ -632,22 +653,24 @@ func (c *Consumer) Read(timeout time.Duration) (message *Message, err error) {
 	}
 
 	ev := c.conn.Poll(tMS)
+	if ev == nil {
+		// Ничего нет
+		return nil, nil
+	}
 
 	switch e := ev.(type) {
 	case *kafka.Message:
-		message = (*Message)(e)
+		return (*Message)(e), nil
 
 	case kafka.PartitionEOF:
-		err = ErrorEOF
+		return nil, PartitionEOF
 
 	case kafka.Error:
-		err = e
+		return nil, Error(e)
 
 	default:
-		err = ErrorNoData
+		return nil, fmt.Errorf("unknown error")
 	}
-
-	return
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
