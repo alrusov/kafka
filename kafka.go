@@ -41,14 +41,13 @@ type (
 		ProducerTopics map[string]*ProducerTopicConfig `toml:"producer-topics"` // Список топиков продюсера с их параметрами map[virtualName]*config
 		ConsumerTopics map[string]*ConsumerTopicConfig `toml:"consumer-topics"` // Список топиков консьюмера с их параметрами map[virtualName]*config
 
-		RevProducerTopics misc.StringMap `toml:"-"` // Обратное соответствие map[topicName]virtualName
-		RevConsumerTopics misc.StringMap `toml:"-"` // Обратное соответствие map[topicName]virtualName
+		//		RevProducerTopics misc.StringMap `toml:"-"` // Обратное соответствие map[topicName]virtualName
+		//		RevConsumerTopics misc.StringMap `toml:"-"` // Обратное соответствие map[topicName]virtualName
 	}
 
 	// Параметры топика продюсера
 	ProducerTopicConfig struct {
-		Name   string `toml:"name"`   // Имя топика
-		Active bool   `toml:"active"` // Активный?
+		Active bool `toml:"active"` // Активный?
 
 		NumPartitions     int `toml:"num-partitions"`     // Количество партиций при создании
 		ReplicationFactor int `toml:"replication-factor"` // Фактор репликации при создании
@@ -58,15 +57,15 @@ type (
 
 		RetentionSize int64 `toml:"retention-size"` // Максимальный размер для очистки по размеру
 
-		Extra interface{} `toml:"extra"` // Произвольные дополнительные данные
+		Extra misc.InterfaceMap `toml:"extra"` // Произвольные дополнительные данные
 	}
 
 	// Параметры топика консьюмера
 	ConsumerTopicConfig struct {
-		Name   string `toml:"name"`   // Имя топика
-		Active bool   `toml:"active"` // Активный?
+		Active   bool   `toml:"active"`   // Активный?
+		Encoding string `toml:"encoding"` // Формат данных
 
-		Extra interface{} `toml:"extra"` // Произвольные дополнительные данные
+		Extra misc.InterfaceMap `toml:"extra"` // Произвольные дополнительные данные
 	}
 
 	// Админский клиент
@@ -123,7 +122,7 @@ var (
 	Log = log.NewFacility("kafka")
 
 	// Ошибка - конец данных
-	PartitionEOF = errors.New("partition EOF")
+	ErrPartitionEOF = errors.New("partition EOF")
 )
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -158,8 +157,6 @@ func (c *Config) Check(cfg interface{}) (err error) {
 		c.Timeout = config.ClientDefaultTimeout
 	}
 
-	c.RevProducerTopics = make(misc.StringMap, len(c.ProducerTopics))
-
 	for key, topic := range c.ProducerTopics {
 		err = topic.Check(cfg)
 		if err != nil {
@@ -171,11 +168,7 @@ func (c *Config) Check(cfg interface{}) (err error) {
 			delete(c.ProducerTopics, key)
 			continue
 		}
-
-		c.RevProducerTopics[topic.Name] = key
 	}
-
-	c.RevConsumerTopics = make(misc.StringMap, len(c.ConsumerTopics))
 
 	for key, topic := range c.ConsumerTopics {
 		err = topic.Check(cfg)
@@ -188,8 +181,6 @@ func (c *Config) Check(cfg interface{}) (err error) {
 			delete(c.ConsumerTopics, key)
 			continue
 		}
-
-		c.RevConsumerTopics[topic.Name] = key
 	}
 
 	return msgs.Error()
@@ -200,10 +191,6 @@ func (c *Config) Check(cfg interface{}) (err error) {
 // Проверка валидности ProducerTopicConfig
 func (c *ProducerTopicConfig) Check(cfg interface{}) (err error) {
 	msgs := misc.NewMessages()
-
-	if c.Name == "" {
-		msgs.Add("empty name")
-	}
 
 	if c.NumPartitions <= 0 {
 		c.NumPartitions = 1
@@ -233,10 +220,6 @@ func (c *ProducerTopicConfig) Check(cfg interface{}) (err error) {
 // Проверка валидности ProducerTopicConfig
 func (c *ConsumerTopicConfig) Check(cfg interface{}) (err error) {
 	msgs := misc.NewMessages()
-
-	if c.Name == "" {
-		msgs.Add("empty name")
-	}
 
 	return msgs.Error()
 }
@@ -344,7 +327,7 @@ func (c *AdminClient) GetMetadata(topic string) (m *Metadata, err error) {
 //----------------------------------------------------------------------------------------------------------------------------//
 
 // Создать топик
-func (c *AdminClient) CreateTopic(topic *ProducerTopicConfig) (err error) {
+func (c *AdminClient) CreateTopic(name string, topic *ProducerTopicConfig) (err error) {
 	if inTest {
 		return nil
 	}
@@ -364,7 +347,7 @@ func (c *AdminClient) CreateTopic(topic *ProducerTopicConfig) (err error) {
 		context.Background(),
 		[]kafka.TopicSpecification{
 			{
-				Topic:             topic.Name,
+				Topic:             name,
 				NumPartitions:     topic.NumPartitions,
 				ReplicationFactor: topic.ReplicationFactor,
 				Config:            config,
@@ -663,7 +646,7 @@ func (c *Consumer) Read(timeout time.Duration) (message *Message, err error) {
 		return (*Message)(e), nil
 
 	case kafka.PartitionEOF:
-		return nil, PartitionEOF
+		return nil, ErrPartitionEOF
 
 	case kafka.Error:
 		return nil, Error(e)
