@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
@@ -36,7 +35,8 @@ type (
 		TimeoutS string        `toml:"timeout"` // Строчное представление таймаута
 		Timeout  time.Duration `toml:"-"`       // Таймаут
 
-		Group string `toml:"group"` // Группа для консьюмера
+		Group      string `toml:"group"`       // Группа для консьюмера
+		AutoCommit bool   `toml:"auto-commit"` // Использовать auto commit для консьюмера?
 
 		ProducerTopics map[string]*ProducerTopicConfig `toml:"producer-topics"` // Список топиков продюсера с их параметрами map[virtualName]*config
 		ConsumerTopics map[string]*ConsumerTopicConfig `toml:"consumer-topics"` // Список топиков консьюмера с их параметрами map[virtualName]*config
@@ -70,7 +70,6 @@ type (
 
 	// Админский клиент
 	AdminClient struct {
-		mutex     *sync.Mutex        // as is
 		cfg       *Config            // Конфигурация
 		timeoutMS int                // Таймаут в МИЛЛИСЕКУНДАХ
 		conn      *kafka.AdminClient // Соединение
@@ -78,7 +77,6 @@ type (
 
 	// Продюсер
 	Producer struct {
-		mutex     *sync.Mutex     // as is
 		cfg       *Config         // Конфигурация
 		timeoutMS int             // Таймаут в МИЛЛИСЕКУНДАХ
 		conn      *kafka.Producer // Соединение
@@ -86,7 +84,6 @@ type (
 
 	// консьюмер
 	Consumer struct {
-		mutex     *sync.Mutex     // as is
 		cfg       *Config         // Конфигурация
 		timeoutMS int             // Таймаут в МИЛЛИСЕКУНДАХ
 		conn      *kafka.Consumer // Соединение
@@ -236,6 +233,7 @@ func (c *Config) makeConfigMap(isConsumer bool) (config *kafka.ConfigMap) {
 
 	if isConsumer {
 		(*config)["group.id"] = c.Group
+		(*config)["enable.auto.commit"] = c.AutoCommit
 		(*config)["go.application.rebalance.enable"] = true
 	} else {
 		(*config)["compression.codec"] = "gzip"
@@ -260,22 +258,16 @@ func timeMS(timeout time.Duration) int {
 
 // Создать новое админское соединение
 func (c *Config) NewAdmin() (client *AdminClient, err error) {
-	if inTest {
-		return &AdminClient{
-			mutex:     new(sync.Mutex),
-			cfg:       c,
-			timeoutMS: c.timeMS(),
-			conn:      nil,
-		}, nil
-	}
+	conn := (*kafka.AdminClient)(nil)
 
-	conn, err := kafka.NewAdminClient(c.makeConfigMap(false))
-	if err != nil {
-		return
+	if !misc.TEST {
+		conn, err = kafka.NewAdminClient(c.makeConfigMap(false))
+		if err != nil {
+			return
+		}
 	}
 
 	client = &AdminClient{
-		mutex:     new(sync.Mutex),
 		cfg:       c,
 		timeoutMS: c.timeMS(),
 		conn:      conn,
@@ -288,12 +280,9 @@ func (c *Config) NewAdmin() (client *AdminClient, err error) {
 
 // Закрыть админское соединение
 func (c *AdminClient) Close() {
-	if inTest {
+	if misc.TEST {
 		return
 	}
-
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
 
 	c.conn.Close()
 }
@@ -302,12 +291,9 @@ func (c *AdminClient) Close() {
 
 // Получить метаданные для топика. Если передано пустое имя, то всех.
 func (c *AdminClient) GetMetadata(topic string) (m *Metadata, err error) {
-	if inTest {
+	if misc.TEST {
 		return &Metadata{}, nil
 	}
-
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
 
 	pTopic := &topic
 	allTopics := topic == ""
@@ -328,12 +314,9 @@ func (c *AdminClient) GetMetadata(topic string) (m *Metadata, err error) {
 
 // Создать топик
 func (c *AdminClient) CreateTopic(name string, topic *ProducerTopicConfig) (err error) {
-	if inTest {
+	if misc.TEST {
 		return nil
 	}
-
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
 
 	config := make(misc.StringMap, 16)
 	if topic.RetentionTime > 0 {
@@ -363,12 +346,9 @@ func (c *AdminClient) CreateTopic(name string, topic *ProducerTopicConfig) (err 
 
 // Удалить топик
 func (c *AdminClient) DeleteTopic(topic string) (err error) {
-	if inTest {
+	if misc.TEST {
 		return nil
 	}
-
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
 
 	_, err = c.conn.DeleteTopics(
 		context.Background(),
@@ -385,22 +365,16 @@ func (c *AdminClient) DeleteTopic(topic string) (err error) {
 
 // Создать новое продюсерское соединение
 func (c *Config) NewProducer() (client *Producer, err error) {
-	if inTest {
-		return &Producer{
-			mutex:     new(sync.Mutex),
-			cfg:       c,
-			timeoutMS: c.timeMS(),
-			conn:      nil,
-		}, nil
-	}
+	conn := (*kafka.Producer)(nil)
 
-	conn, err := kafka.NewProducer(c.makeConfigMap(false))
-	if err != nil {
-		return
+	if !misc.TEST {
+		conn, err = kafka.NewProducer(c.makeConfigMap(false))
+		if err != nil {
+			return
+		}
 	}
 
 	client = &Producer{
-		mutex:     new(sync.Mutex),
 		cfg:       c,
 		timeoutMS: c.timeMS(),
 		conn:      conn,
@@ -413,12 +387,9 @@ func (c *Config) NewProducer() (client *Producer, err error) {
 
 // Закрыть продюсерское соединение
 func (c *Producer) Close() {
-	if inTest {
+	if misc.TEST {
 		return
 	}
-
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
 
 	c.conn.Close()
 }
@@ -427,12 +398,9 @@ func (c *Producer) Close() {
 
 // Сохранить сообщения в kafka
 func (c *Producer) SaveMessages(m Messages) (err error) {
-	if inTest {
+	if misc.TEST {
 		return nil
 	}
-
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
 
 	msgs := misc.NewMessages()
 
@@ -481,22 +449,16 @@ func NewMessage(topic string, key []byte, value []byte) Message {
 
 // Создать новое консьюмерское соединение
 func (c *Config) NewConsumer() (client *Consumer, err error) {
-	if inTest {
-		return &Consumer{
-			mutex:     new(sync.Mutex),
-			cfg:       c,
-			timeoutMS: c.timeMS(),
-			conn:      nil,
-		}, nil
-	}
+	conn := (*kafka.Consumer)(nil)
 
-	conn, err := kafka.NewConsumer(c.makeConfigMap(true))
-	if err != nil {
-		return
+	if !misc.TEST {
+		conn, err = kafka.NewConsumer(c.makeConfigMap(true))
+		if err != nil {
+			return
+		}
 	}
 
 	client = &Consumer{
-		mutex:     new(sync.Mutex),
 		cfg:       c,
 		timeoutMS: c.timeMS(),
 		conn:      conn,
@@ -509,12 +471,9 @@ func (c *Config) NewConsumer() (client *Consumer, err error) {
 
 // Закрыть консьюмерское соединение
 func (c *Consumer) Close() {
-	if inTest {
+	if misc.TEST {
 		return
 	}
-
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
 
 	c.conn.Close()
 }
@@ -523,12 +482,9 @@ func (c *Consumer) Close() {
 
 // Подписаться на топики по списку
 func (c *Consumer) Subscribe(topics []string) (err error) {
-	if inTest {
+	if misc.TEST {
 		return nil
 	}
-
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
 
 	list := make([]kafka.TopicPartition, len(topics))
 
@@ -567,12 +523,9 @@ func (c *Consumer) Unsubscribe() (err error) {
 
 // Получить текущие смещения для списка топиков
 func (c *Consumer) Offsets(topics []string) (offsets []Offset, err error) {
-	if inTest {
+	if misc.TEST {
 		return make([]Offset, len(topics)), nil
 	}
-
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
 
 	list := make([]kafka.TopicPartition, len(topics))
 
@@ -601,12 +554,9 @@ func (c *Consumer) Offsets(topics []string) (offsets []Offset, err error) {
 
 // Установить указатель чтения для топика
 func (c *Consumer) Seek(topic string, offset Offset) (err error) {
-	if inTest {
+	if misc.TEST {
 		return nil
 	}
-
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
 
 	return c.conn.Seek(
 		kafka.TopicPartition{
@@ -622,12 +572,9 @@ func (c *Consumer) Seek(topic string, offset Offset) (err error) {
 
 // Получить сообщение из топика, если оно там есть
 func (c *Consumer) Read(timeout time.Duration) (message *Message, err error) {
-	if inTest {
+	if misc.TEST {
 		return nil, nil
 	}
-
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
 
 	tMS := c.timeoutMS
 
@@ -660,26 +607,12 @@ func (c *Consumer) Read(timeout time.Duration) (message *Message, err error) {
 
 // Зафиксировать последнюю прочитанную позицию для топика
 func (c *Consumer) Commit(message *Message) (err error) {
-	if inTest {
+	if misc.TEST {
 		return nil
 	}
 
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
 	_, err = c.conn.CommitMessage((*kafka.Message)(message))
 	return
-}
-
-//----------------------------------------------------------------------------------------------------------------------------//
-
-var (
-	inTest = false
-)
-
-// Переключиться в тестовый режим
-func SwitchToTest() {
-	inTest = true
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
