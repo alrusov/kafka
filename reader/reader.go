@@ -16,7 +16,7 @@ import (
 
 type (
 	Handler interface {
-		Processor(topic string, key string, data []byte)
+		Processor(topic string, key string, data []byte) (err error)
 		Commited(err error)
 	}
 )
@@ -127,11 +127,14 @@ func reader(kafkaCfg *kafka.Config, conn *kafka.Consumer, handler Handler) {
 			log.MessageWithSource(log.TRACE4, logSrc, "Received %s.%d: %s = %s", *m.TopicPartition.Topic, m.TopicPartition.Partition, m.Key, m.Value)
 		}
 
-		handler.Processor(*m.TopicPartition.Topic, string(m.Key), m.Value)
-
-		err = conn.Commit(m)
+		err = handler.Processor(*m.TopicPartition.Topic, string(m.Key), m.Value)
 		if err != nil {
-			Log.MessageWithSource(log.ERR, logSrc, "commit: %s", err)
+			Log.MessageWithSource(log.ERR, logSrc, "processor: %s", err)
+		} else {
+			err = conn.Commit(m)
+			if err != nil {
+				Log.MessageWithSource(log.ERR, logSrc, "commit: %s", err)
+			}
 		}
 
 		handler.Commited(err)
