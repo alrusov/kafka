@@ -16,8 +16,8 @@ import (
 
 type (
 	Handler interface {
-		Processor(topic string, key string, data []byte) (err error)
-		Commited(err error)
+		Processor(topic string, key string, data []byte) (doRetry bool, err error)
+		SetResult(err error)
 	}
 )
 
@@ -127,17 +127,27 @@ func reader(kafkaCfg *kafka.Config, conn *kafka.Consumer, handler Handler) {
 			log.MessageWithSource(log.TRACE4, logSrc, "Received %s.%d: %s = %s", *m.TopicPartition.Topic, m.TopicPartition.Partition, m.Key, m.Value)
 		}
 
-		err = handler.Processor(*m.TopicPartition.Topic, string(m.Key), m.Value)
-		if err != nil {
-			Log.MessageWithSource(log.ERR, logSrc, "processor: %s", err)
-		} else {
-			err = conn.Commit(m)
-			if err != nil {
-				Log.MessageWithSource(log.ERR, logSrc, "commit: %s", err)
-			}
-		}
+		var doRetry bool
 
-		handler.Commited(err)
+		for {
+			doRetry, err = handler.Processor(*m.TopicPartition.Topic, string(m.Key), m.Value)
+			if err != nil {
+				Log.MessageWithSource(log.ERR, logSrc, "processor: %s", err)
+			} else {
+				doRetry = false
+				err = conn.Commit(m)
+				if err != nil {
+					Log.MessageWithSource(log.ERR, logSrc, "commit: %s", err)
+				}
+			}
+
+			handler.SetResult(err)
+			if !doRetry {
+				break
+			}
+
+			misc.Sleep(kafkaCfg.RetryTimeout)
+		}
 	}
 }
 

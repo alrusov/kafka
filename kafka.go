@@ -35,6 +35,9 @@ type (
 		TimeoutS string        `toml:"timeout"` // Строчное представление таймаута
 		Timeout  time.Duration `toml:"-"`       // Таймаут
 
+		RetryTimeoutS string        `toml:"retry-timeout"` // Строчное представление таймаута повторной отправки
+		RetryTimeout  time.Duration `toml:"-"`             // Таймаут повторной отправки
+
 		Group      string `toml:"group"`       // Группа для консьюмера
 		AutoCommit bool   `toml:"auto-commit"` // Использовать auto commit для консьюмера?
 
@@ -152,6 +155,14 @@ func (c *Config) Check(cfg interface{}) (err error) {
 	}
 	if c.Timeout <= 0 {
 		c.Timeout = config.ClientDefaultTimeout
+	}
+
+	c.RetryTimeout, err = misc.Interval2Duration(c.RetryTimeoutS)
+	if err != nil {
+		msgs.Add(`kafka.retry-timeout: %s`, err)
+	}
+	if c.RetryTimeout <= 0 {
+		c.RetryTimeout = c.Timeout
 	}
 
 	for key, topic := range c.ProducerTopics {
