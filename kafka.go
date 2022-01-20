@@ -41,9 +41,6 @@ type (
 
 		ProducerTopics map[string]*ProducerTopicConfig `toml:"producer-topics"` // Список топиков продюсера с их параметрами map[virtualName]*config
 		ConsumerTopics map[string]*ConsumerTopicConfig `toml:"consumer-topics"` // Список топиков консьюмера с их параметрами map[virtualName]*config
-
-		//		RevProducerTopics misc.StringMap `toml:"-"` // Обратное соответствие map[topicName]virtualName
-		//		RevConsumerTopics misc.StringMap `toml:"-"` // Обратное соответствие map[topicName]virtualName
 	}
 
 	// Параметры топика продюсера
@@ -57,7 +54,7 @@ type (
 
 		RetentionSize int64 `toml:"retention-size"` // Максимальный размер для очистки по размеру
 
-		Extra misc.InterfaceMap `toml:"extra"` // Произвольные дополнительные данные
+		Extra interface{} `toml:"extra"` // Произвольные дополнительные данные
 	}
 
 	// Параметры топика консьюмера
@@ -65,7 +62,7 @@ type (
 		Active   bool   `toml:"active"`   // Активный?
 		Encoding string `toml:"encoding"` // Формат данных
 
-		Extra misc.InterfaceMap `toml:"extra"` // Произвольные дополнительные данные
+		Extra interface{} `toml:"extra"` // Произвольные дополнительные данные
 	}
 
 	// Админский клиент
