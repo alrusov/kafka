@@ -18,6 +18,7 @@
 .env
 
 _extra/
+vendor/
 logs/
 *.log
 

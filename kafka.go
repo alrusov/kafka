@@ -32,11 +32,9 @@ type (
 		User     string `toml:"user"`     // Пользователь
 		Password string `toml:"password"` // Пароль
 
-		TimeoutS string        `toml:"timeout"` // Строчное представление таймаута
-		Timeout  time.Duration `toml:"-"`       // Таймаут
+		Timeout config.Duration `toml:"timeout"` // Таймаут
 
-		RetryTimeoutS string        `toml:"retry-timeout"` // Строчное представление таймаута повторной отправки
-		RetryTimeout  time.Duration `toml:"-"`             // Таймаут повторной отправки
+		RetryTimeout config.Duration `toml:"retry-timeout"` // Таймаут повторной отправки
 
 		Group      string `toml:"group"`       // Группа для консьюмера
 		AutoCommit bool   `toml:"auto-commit"` // Использовать auto commit для консьюмера?
@@ -55,8 +53,7 @@ type (
 		NumPartitions     int `toml:"num-partitions"`     // Количество партиций при создании
 		ReplicationFactor int `toml:"replication-factor"` // Фактор репликации при создании
 
-		RetentionTimeS string        `toml:"retention-time"` // Строчное представление времени жизни данных
-		RetentionTime  time.Duration `toml:"-"`              // Время жизни данных
+		RetentionTime config.Duration `toml:"retention-time"` // Время жизни данных
 
 		RetentionSize int64 `toml:"retention-size"` // Максимальный размер для очистки по размеру
 
@@ -149,18 +146,10 @@ func (c *Config) Check(cfg interface{}) (err error) {
 		msgs.Add(`Undefined kafka.servers`)
 	}
 
-	c.Timeout, err = misc.Interval2Duration(c.TimeoutS)
-	if err != nil {
-		msgs.Add(`kafka.timeout: %s`, err)
-	}
 	if c.Timeout <= 0 {
 		c.Timeout = config.ClientDefaultTimeout
 	}
 
-	c.RetryTimeout, err = misc.Interval2Duration(c.RetryTimeoutS)
-	if err != nil {
-		msgs.Add(`kafka.retry-timeout: %s`, err)
-	}
 	if c.RetryTimeout <= 0 {
 		c.RetryTimeout = c.Timeout
 	}
@@ -208,10 +197,6 @@ func (c *ProducerTopicConfig) Check(cfg interface{}) (err error) {
 		c.ReplicationFactor = 1
 	}
 
-	c.RetentionTime, err = misc.Interval2Duration(c.RetentionTimeS)
-	if err != nil {
-		msgs.AddError(err)
-	}
 	if c.RetentionTime <= 0 {
 		c.RetentionTime = -1
 	}
@@ -261,8 +246,8 @@ func (c *Config) timeMS() int {
 }
 
 // Привести таймаут к миллисекунды
-func timeMS(timeout time.Duration) int {
-	return int(timeout / time.Millisecond)
+func timeMS(timeout config.Duration) int {
+	return int(timeout / config.Duration(time.Millisecond))
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -347,7 +332,7 @@ func (c *AdminClient) CreateTopic(name string, topic *ProducerTopicConfig) (err 
 				Config:            config,
 			},
 		},
-		kafka.SetAdminOperationTimeout(c.cfg.Timeout),
+		kafka.SetAdminOperationTimeout(time.Duration(c.cfg.Timeout)),
 	)
 
 	return
@@ -366,7 +351,7 @@ func (c *AdminClient) DeleteTopic(topic string) (err error) {
 		[]string{
 			topic,
 		},
-		kafka.SetAdminOperationTimeout(c.cfg.Timeout),
+		kafka.SetAdminOperationTimeout(time.Duration(c.cfg.Timeout)),
 	)
 
 	return
@@ -582,7 +567,7 @@ func (c *Consumer) Seek(topic string, offset Offset) (err error) {
 //----------------------------------------------------------------------------------------------------------------------------//
 
 // Получить сообщение из топика, если оно там есть
-func (c *Consumer) Read(timeout time.Duration) (message *Message, err error) {
+func (c *Consumer) Read(timeout config.Duration) (message *Message, err error) {
 	if misc.TEST {
 		return nil, nil
 	}

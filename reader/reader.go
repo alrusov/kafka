@@ -5,6 +5,7 @@ package reader
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/alrusov/kafka"
@@ -16,13 +17,15 @@ import (
 
 type (
 	Handler interface {
-		Processor(topic string, key string, data []byte) (doRetry bool, err error)
-		SetResult(err error)
+		Processor(id uint64, topic string, key string, data []byte) (err error)
+		SetResult(id uint64, err error) (doRetry bool)
 	}
 )
 
 var (
 	Log = log.NewFacility("kafka.reader") // Log facility
+
+	lastID = uint64(0)
 )
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -46,7 +49,7 @@ func Go(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler) (err er
 	misc.AddExitFunc(
 		"kafka.reader",
 		func(_ int, _ interface{}) {
-			time.Sleep(kafkaCfg.Timeout) // don't use misc.Sleep!
+			time.Sleep(time.Duration(kafkaCfg.Timeout)) // don't use misc.Sleep!
 			Log.Message(log.INFO, "Connection closed")
 		},
 		nil,
@@ -80,7 +83,7 @@ func reader(kafkaCfg *kafka.Config, conn *kafka.Consumer, handler Handler) {
 		if !firstTime {
 			firstTime = false
 			conn.Unsubscribe()
-			misc.Sleep(kafkaCfg.Timeout)
+			misc.Sleep(time.Duration(kafkaCfg.Timeout))
 		}
 
 		Log.MessageWithSource(log.INFO, logSrc, "Try to subscribe to %v", topics)
@@ -123,30 +126,31 @@ func reader(kafkaCfg *kafka.Config, conn *kafka.Consumer, handler Handler) {
 			continue
 		}
 
+		id := atomic.AddUint64(&lastID, 1)
+
 		if Log.CurrentLogLevel() >= log.TRACE4 {
-			log.MessageWithSource(log.TRACE4, logSrc, "Received %s.%d: %s = %s", *m.TopicPartition.Topic, m.TopicPartition.Partition, m.Key, m.Value)
+			log.MessageWithSource(log.TRACE4, logSrc, "[%d] Received %s.%d: %s = %s", id, *m.TopicPartition.Topic, m.TopicPartition.Partition, m.Key, m.Value)
 		}
 
 		var doRetry bool
 
 		for {
-			doRetry, err = handler.Processor(*m.TopicPartition.Topic, string(m.Key), m.Value)
+			err = handler.Processor(id, *m.TopicPartition.Topic, string(m.Key), m.Value)
 			if err != nil {
-				Log.MessageWithSource(log.ERR, logSrc, "processor: %s", err)
+				Log.MessageWithSource(log.ERR, logSrc, "[%d] Processor: %s", id, err)
 			} else {
-				doRetry = false
 				err = conn.Commit(m)
 				if err != nil {
-					Log.MessageWithSource(log.ERR, logSrc, "commit: %s", err)
+					Log.MessageWithSource(log.ERR, logSrc, "[%d] Commit: %s", id, err)
 				}
 			}
 
-			handler.SetResult(err)
+			doRetry = handler.SetResult(id, err)
 			if !doRetry {
 				break
 			}
 
-			misc.Sleep(kafkaCfg.RetryTimeout)
+			misc.Sleep(time.Duration(kafkaCfg.RetryTimeout))
 		}
 	}
 }
