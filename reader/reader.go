@@ -62,12 +62,13 @@ func Go(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler) (err er
 
 // Читатель
 func reader(kafkaCfg *kafka.Config, conn *kafka.Consumer, handler Handler) {
-	logSrc := kafkaCfg.Group
-	Log.MessageWithSource(log.INFO, logSrc, `Started`)
+	msgSrc := kafkaCfg.Group
+
+	Log.MessageWithSource(log.INFO, msgSrc, `Started`)
 
 	defer func() {
 		conn.Close() // Delayed up to 10 seconds :(
-		Log.MessageWithSource(log.INFO, logSrc, `Stopped`)
+		Log.MessageWithSource(log.INFO, msgSrc, `Stopped`)
 	}()
 
 	// Topics list
@@ -86,24 +87,20 @@ func reader(kafkaCfg *kafka.Config, conn *kafka.Consumer, handler Handler) {
 			misc.Sleep(time.Duration(kafkaCfg.Timeout))
 		}
 
-		Log.MessageWithSource(log.INFO, logSrc, "Try to subscribe to %v", topics)
+		Log.MessageWithSource(log.INFO, msgSrc, "Try to subscribe to %v", topics)
 
 		err := conn.Subscribe(topics)
 		if err != nil {
-			Log.MessageWithSource(log.ERR, logSrc, "Subscribe: %s", err)
+			Log.MessageWithSource(log.ERR, msgSrc, "Subscribe: %s", err)
 			return
 		}
 
-		Log.MessageWithSource(log.INFO, logSrc, "Subscribe OK")
+		Log.MessageWithSource(log.INFO, msgSrc, "Subscribe OK")
 	}
 
 	subscribe()
 
-	for {
-		if !misc.AppStarted() {
-			return
-		}
-
+	for misc.AppStarted() {
 		// reading with standard timeout
 		m, err := conn.Read(0)
 
@@ -115,7 +112,7 @@ func reader(kafkaCfg *kafka.Config, conn *kafka.Consumer, handler Handler) {
 				// configuration property to true.
 				fallthrough
 			default:
-				Log.MessageWithSource(log.ERR, logSrc, "read: %s", err)
+				Log.MessageWithSource(log.ERR, msgSrc, "read: %s", err)
 				subscribe()
 			}
 			continue
@@ -129,19 +126,19 @@ func reader(kafkaCfg *kafka.Config, conn *kafka.Consumer, handler Handler) {
 		id := atomic.AddUint64(&lastID, 1)
 
 		if Log.CurrentLogLevel() >= log.TRACE4 {
-			log.MessageWithSource(log.TRACE4, logSrc, "[%d] Received %s.%d: %s = %s", id, *m.TopicPartition.Topic, m.TopicPartition.Partition, m.Key, m.Value)
+			log.MessageWithSource(log.TRACE4, msgSrc, "[%d] Received %s.%d: %s = %s", id, *m.TopicPartition.Topic, m.TopicPartition.Partition, m.Key, m.Value)
 		}
 
 		var doRetry bool
 
-		for {
+		for misc.AppStarted() {
 			err = handler.Processor(id, *m.TopicPartition.Topic, string(m.Key), m.Value)
 			if err != nil {
-				Log.MessageWithSource(log.ERR, logSrc, "[%d] Processor: %s", id, err)
+				Log.MessageWithSource(log.ERR, msgSrc, "[%d] Processor: %s", id, err)
 			} else {
 				err = conn.Commit(m)
 				if err != nil {
-					Log.MessageWithSource(log.ERR, logSrc, "[%d] Commit: %s", id, err)
+					Log.MessageWithSource(log.ERR, msgSrc, "[%d] Commit: %s", id, err)
 				}
 			}
 
