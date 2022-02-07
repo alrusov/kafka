@@ -135,15 +135,14 @@ func reader(kafkaCfg *kafka.Config, conn *kafka.Consumer, handler Handler) {
 			err = handler.Processor(id, *m.TopicPartition.Topic, string(m.Key), m.Value)
 			if err != nil {
 				Log.MessageWithSource(log.ERR, msgSrc, "[%d] Processor: %s", id, err)
-			} else {
-				err = conn.Commit(m)
-				if err != nil {
-					Log.MessageWithSource(log.ERR, msgSrc, "[%d] Commit: %s", id, err)
-				}
 			}
 
 			doRetry = handler.SetResult(id, err)
 			if !doRetry {
+				err = conn.Commit(m)
+				if err != nil {
+					Log.MessageWithSource(log.ERR, msgSrc, "[%d] Commit: %s", id, err)
+				}
 				break
 			}
 

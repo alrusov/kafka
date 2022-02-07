@@ -1,11 +1,11 @@
-github.com/alrusov/config v0.1.45 h1:Otge0PLbcaaLfLxSVpXfAUo9NMBYfh9vPZia81gSyPQ=
-github.com/alrusov/config v0.1.45/go.mod h1:C7TWG1cb4ikbGuCub/WLMAU3MEov415V3bcTitqJqwU=
+github.com/alrusov/config v0.1.46 h1:hpAzuFkEYYkZBQS9bKlEBtgNEQavgscCboeI/wqBSow=
+github.com/alrusov/config v0.1.46/go.mod h1:smet+ptoCR2Rz2TvDYzaFz8iebjv7ScYD5Ac81XdVR4=
 github.com/alrusov/jsonw v0.1.1 h1:fApyxCLUXpMxCLGw7S4vCBmfXWALuX+eU4lGxmxWXMs=
 github.com/alrusov/log v0.1.31 h1:RKg1UKVAMVJ9d+pQLDYEYDYeXdAM30dFCc+0lk4w7EQ=
 github.com/alrusov/log v0.1.31/go.mod h1:oQh1gXfxlDfI+MWAigQQzCu/O9wv6mM59JXqWfj5mMc=
 github.com/alrusov/misc v0.1.45/go.mod h1:9n/TPhEOs7n3zEKP8R/TK0TIOJGISHOJe5KwKqsCsgg=
-github.com/alrusov/misc v0.1.49 h1:kk3js0np7tGXYytErildFKS5FEyBwxIaHJsCpSXKXWs=
-github.com/alrusov/misc v0.1.49/go.mod h1:kb9wxXT9lZpuQ+72uRHs3iqnMiTD3NP9wfV+jeOxHoE=
+github.com/alrusov/misc v0.1.52 h1:YDDJu4TTtA2HYsslC8EUCss5NdUdBiPiZ+GuY7BWgbA=
+github.com/alrusov/misc v0.1.52/go.mod h1:kb9wxXT9lZpuQ+72uRHs3iqnMiTD3NP9wfV+jeOxHoE=
 github.com/alrusov/panic v0.1.14 h1:h3DU1GVIp1ab3PPMAOweyWMPILWyLR8EZnjPIx9SUfo=
 github.com/alrusov/panic v0.1.14/go.mod h1:ALoONDJK6XEbMvLnsenCkVSF1LXQ/gjU7uXi0JX7bak=
 github.com/confluentinc/confluent-kafka-go v1.8.2 h1:PBdbvYpyOdFLehj8j+9ba7FL4c4Moxn79gy9cYKxG5E=
