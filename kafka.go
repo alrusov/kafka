@@ -36,6 +36,8 @@ type (
 
 		RetryTimeout config.Duration `toml:"retry-timeout"` // Таймаут повторной отправки
 
+		MaxRequestSize int `toml:"max-request-size"` // Максимальный размер сообщения
+
 		Group      string `toml:"group"`       // Группа для консьюмера
 		AutoCommit bool   `toml:"auto-commit"` // Использовать auto commit для консьюмера?
 
@@ -151,6 +153,10 @@ func (c *Config) Check(cfg interface{}) (err error) {
 		c.RetryTimeout = c.Timeout
 	}
 
+	if c.MaxRequestSize <= 0 {
+		c.MaxRequestSize = 1048576
+	}
+
 	for key, topic := range c.ProducerTopics {
 		err = topic.Check(cfg)
 		if err != nil {
@@ -217,7 +223,7 @@ func (c *ConsumerTopicConfig) Check(cfg interface{}) (err error) {
 //----------------------------------------------------------------------------------------------------------------------------//
 
 // Создать набор параметров для соединения
-func (c *Config) makeConfigMap(isConsumer bool) (config *kafka.ConfigMap) {
+func (c *Config) makeConfigMap(isConsumer bool, extra misc.InterfaceMap) (config *kafka.ConfigMap) {
 	config = &kafka.ConfigMap{
 		"bootstrap.servers": c.Servers,
 		"client.id":         c.User,
@@ -228,8 +234,15 @@ func (c *Config) makeConfigMap(isConsumer bool) (config *kafka.ConfigMap) {
 		(*config)["group.id"] = c.Group
 		(*config)["enable.auto.commit"] = c.AutoCommit
 		(*config)["go.application.rebalance.enable"] = true
+		(*config)["max.partition.fetch.bytes"] = c.MaxRequestSize
+		(*config)["fetch.max.bytes"] = c.MaxRequestSize
 	} else {
+		(*config)["message.max.bytes"] = c.MaxRequestSize
 		(*config)["compression.codec"] = "gzip"
+	}
+
+	for n, v := range extra {
+		(*config)[n] = v
 	}
 
 	return
@@ -251,10 +264,14 @@ func timeMS(timeout config.Duration) int {
 
 // Создать новое админское соединение
 func (c *Config) NewAdmin() (client *AdminClient, err error) {
+	return c.NewAdminEx(nil)
+}
+
+func (c *Config) NewAdminEx(extra misc.InterfaceMap) (client *AdminClient, err error) {
 	conn := (*kafka.AdminClient)(nil)
 
 	if !misc.TEST {
-		conn, err = kafka.NewAdminClient(c.makeConfigMap(false))
+		conn, err = kafka.NewAdminClient(c.makeConfigMap(false, extra))
 		if err != nil {
 			return
 		}
@@ -358,10 +375,14 @@ func (c *AdminClient) DeleteTopic(topic string) (err error) {
 
 // Создать новое продюсерское соединение
 func (c *Config) NewProducer() (client *Producer, err error) {
+	return c.NewProducerEx(nil)
+}
+
+func (c *Config) NewProducerEx(extra misc.InterfaceMap) (client *Producer, err error) {
 	conn := (*kafka.Producer)(nil)
 
 	if !misc.TEST {
-		conn, err = kafka.NewProducer(c.makeConfigMap(false))
+		conn, err = kafka.NewProducer(c.makeConfigMap(false, extra))
 		if err != nil {
 			return
 		}
@@ -442,10 +463,14 @@ func NewMessage(topic string, key []byte, value []byte) Message {
 
 // Создать новое консьюмерское соединение
 func (c *Config) NewConsumer() (client *Consumer, err error) {
+	return c.NewConsumerEx(nil)
+}
+
+func (c *Config) NewConsumerEx(extra misc.InterfaceMap) (client *Consumer, err error) {
 	conn := (*kafka.Consumer)(nil)
 
 	if !misc.TEST {
-		conn, err = kafka.NewConsumer(c.makeConfigMap(true))
+		conn, err = kafka.NewConsumer(c.makeConfigMap(true, extra))
 		if err != nil {
 			return
 		}
