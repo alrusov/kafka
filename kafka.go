@@ -47,7 +47,8 @@ type (
 
 	// Параметры топика продюсера
 	ProducerTopicConfig struct {
-		Active bool `toml:"active"` // Активный?
+		Active bool   `toml:"active"` // Активный?
+		Type   string `toml:"type"`   // Тип топика. Произвольное необязательное значение на умотрение разработчика
 
 		NumPartitions     int `toml:"num-partitions"`     // Количество партиций при создании
 		ReplicationFactor int `toml:"replication-factor"` // Фактор репликации при создании
@@ -62,6 +63,7 @@ type (
 	// Параметры топика консьюмера
 	ConsumerTopicConfig struct {
 		Active   bool   `toml:"active"`   // Активный?
+		Type     string `toml:"type"`     // Тип топика. Произвольное необязательное значение на умотрение разработчика
 		Encoding string `toml:"encoding"` // Формат данных
 
 		Extra interface{} `toml:"extra"` // Произвольные дополнительные данные
