@@ -4,6 +4,7 @@ kafka reader
 package reader
 
 import (
+	"context"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -20,6 +21,11 @@ type (
 		Processor(id uint64, topic string, key string, data []byte) (err error)
 		SetResult(id uint64, err error) (doRetry bool)
 	}
+
+	HandlerEx interface {
+		Processor(id uint64, topic string, m *kafka.Message) (ctx context.Context, err error)
+		SetResult(ctx context.Context, id uint64, err error) (doRetry bool)
+	}
 )
 
 var (
@@ -30,8 +36,28 @@ var (
 
 //----------------------------------------------------------------------------------------------------------------------------//
 
+type handlerWrapper struct {
+	base Handler
+}
+
+func (h *handlerWrapper) Processor(id uint64, topic string, m *kafka.Message) (ctx context.Context, err error) {
+	err = h.base.Processor(id, topic, string(m.Key), m.Value)
+	return nil, err
+}
+
+func (h *handlerWrapper) SetResult(ctx context.Context, id uint64, err error) (doRetry bool) {
+	return h.base.SetResult(id, err)
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
 // Start
+
 func Go(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler) (err error) {
+	return GoEx(kafkaCfg, consumerGroupID, &handlerWrapper{base: handler})
+}
+
+func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler HandlerEx) (err error) {
 	if len(kafkaCfg.ConsumerTopics) == 0 {
 		return fmt.Errorf("no consumer topics defined")
 	}
@@ -61,7 +87,7 @@ func Go(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler) (err er
 //----------------------------------------------------------------------------------------------------------------------------//
 
 // Читатель
-func reader(kafkaCfg *kafka.Config, conn *kafka.Consumer, handler Handler) {
+func reader(kafkaCfg *kafka.Config, conn *kafka.Consumer, handler HandlerEx) {
 	msgSrc := kafkaCfg.Group
 
 	Log.MessageWithSource(log.INFO, msgSrc, `Started`)
@@ -130,14 +156,15 @@ func reader(kafkaCfg *kafka.Config, conn *kafka.Consumer, handler Handler) {
 		}
 
 		var doRetry bool
+		var ctx context.Context
 
 		for misc.AppStarted() {
-			err = handler.Processor(id, *m.TopicPartition.Topic, string(m.Key), m.Value)
+			ctx, err = handler.Processor(id, *m.TopicPartition.Topic, m)
 			if err != nil {
 				Log.MessageWithSource(log.ERR, msgSrc, "[%d] Processor: %s", id, err)
 			}
 
-			doRetry = handler.SetResult(id, err)
+			doRetry = handler.SetResult(ctx, id, err)
 			if !doRetry {
 				err = conn.Commit(m)
 				if err != nil {
