@@ -6,6 +6,7 @@ package reader
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -64,19 +65,54 @@ func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler HandlerEx) (er
 
 	kafkaCfg.Group = consumerGroupID
 
-	// make consumer
-	conn, err := kafkaCfg.NewConsumer()
-	if err != nil {
+	wg := new(sync.WaitGroup)
+
+	start := func(topics []string) (err error) {
+		conn, err := kafkaCfg.NewConsumer()
+		if err != nil {
+			return
+		}
+
+		wg.Add(1)
+		go reader(wg, kafkaCfg, conn, topics, handler)
 		return
 	}
 
-	go reader(kafkaCfg, conn, handler)
+	if kafkaCfg.ConsumeInSeparateThreads {
+		for topic := range kafkaCfg.ConsumerTopics {
+			err = start([]string{topic})
+			if err != nil {
+				return
+			}
+		}
+	} else {
+		// Topics list
+		topics := make([]string, 0, len(kafkaCfg.ConsumerTopics))
+		for name := range kafkaCfg.ConsumerTopics {
+			topics = append(topics, name)
+		}
+
+		err = start(topics)
+		if err != nil {
+			return
+		}
+	}
 
 	misc.AddExitFunc(
 		"kafka.reader",
 		func(_ int, _ interface{}) {
-			time.Sleep(time.Duration(kafkaCfg.Timeout)) // don't use misc.Sleep!
-			Log.Message(log.INFO, "Connection closed")
+			ch := make(chan struct{})
+			go func() {
+				wg.Wait()
+				close(ch)
+			}()
+
+			select {
+			case <-ch:
+				Log.Message(log.INFO, "Connections closed")
+			case <-time.After(time.Duration(kafkaCfg.Timeout)):
+				Log.Message(log.INFO, "Close connections timeout")
+			}
 		},
 		nil,
 	)
@@ -87,22 +123,19 @@ func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler HandlerEx) (er
 //----------------------------------------------------------------------------------------------------------------------------//
 
 // Читатель
-func reader(kafkaCfg *kafka.Config, conn *kafka.Consumer, handler HandlerEx) {
+func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, topics []string, handler HandlerEx) {
 	msgSrc := kafkaCfg.Group
+	if kafkaCfg.ConsumeInSeparateThreads {
+		msgSrc = fmt.Sprintf("%s.%s", msgSrc, topics[0])
+	}
 
 	Log.MessageWithSource(log.INFO, msgSrc, `Started`)
 
 	defer func() {
 		conn.Close() // Delayed up to 10 seconds :(
 		Log.MessageWithSource(log.INFO, msgSrc, `Stopped`)
+		wg.Done()
 	}()
-
-	// Topics list
-	topics := make([]string, 0, len(kafkaCfg.ConsumerTopics))
-
-	for name := range kafkaCfg.ConsumerTopics {
-		topics = append(topics, name)
-	}
 
 	firstTime := true
 

@@ -38,11 +38,11 @@ type (
 
 		MaxRequestSize int `toml:"max-request-size"` // Максимальный размер сообщения
 
-		Group      string `toml:"group"`       // Группа для консьюмера
-		AutoCommit bool   `toml:"auto-commit"` // Использовать auto commit для консьюмера?
-
-		ProducerTopics map[string]*ProducerTopicConfig `toml:"producer-topics"` // Список топиков продюсера с их параметрами map[virtualName]*config
-		ConsumerTopics map[string]*ConsumerTopicConfig `toml:"consumer-topics"` // Список топиков консьюмера с их параметрами map[virtualName]*config
+		Group                    string                          `toml:"group"`                       // Группа для консьюмера
+		AutoCommit               bool                            `toml:"auto-commit"`                 // Использовать auto commit для консьюмера?
+		ConsumeInSeparateThreads bool                            `toml:"consume-in-separate-threads"` // Обрабатывать каждый топик в отдельном потоке
+		ProducerTopics           map[string]*ProducerTopicConfig `toml:"producer-topics"`             // Список топиков продюсера с их параметрами map[virtualName]*config
+		ConsumerTopics           map[string]*ConsumerTopicConfig `toml:"consumer-topics"`             // Список топиков консьюмера с их параметрами map[virtualName]*config
 	}
 
 	// Параметры топика продюсера
@@ -521,7 +521,7 @@ func (c *Consumer) Subscribe(topics []string) (err error) {
 func (c *Consumer) subscribeTopics(topics []string) (err error) {
 	c.conn.SubscribeTopics(topics,
 		func(kc *kafka.Consumer, e kafka.Event) (err error) {
-			Log.Message(log.DEBUG, `Event "%T" reached (%#v)`, e, e)
+			Log.Message(log.DEBUG, `Event "%T" reached (%s)`, e, e.String())
 			switch e.(type) {
 			case kafka.TopicPartition:
 			case kafka.AssignedPartitions:
