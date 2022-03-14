@@ -26,6 +26,7 @@ type (
 	HandlerEx interface {
 		Processor(id uint64, topic string, m *kafka.Message) (ctx context.Context, err error)
 		SetResult(ctx context.Context, id uint64, err error) (doRetry bool)
+		Assigned(topics []string)
 	}
 )
 
@@ -48,6 +49,9 @@ func (h *handlerWrapper) Processor(id uint64, topic string, m *kafka.Message) (c
 
 func (h *handlerWrapper) SetResult(ctx context.Context, id uint64, err error) (doRetry bool) {
 	return h.base.SetResult(id, err)
+}
+
+func (h *handlerWrapper) Assigned(topics []string) {
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -158,6 +162,11 @@ func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, to
 	}
 
 	subscribe()
+
+	go func() {
+		conn.WaitingForAssign()
+		handler.Assigned(topics)
+	}()
 
 	for misc.AppStarted() {
 		// reading with standard timeout

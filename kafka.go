@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
@@ -85,9 +86,11 @@ type (
 
 	// консьюмер
 	Consumer struct {
-		cfg       *Config         // Конфигурация
-		timeoutMS int             // Таймаут в МИЛЛИСЕКУНДАХ
-		conn      *kafka.Consumer // Соединение
+		cfg             *Config         // Конфигурация
+		timeoutMS       int             // Таймаут в МИЛЛИСЕКУНДАХ
+		conn            *kafka.Consumer // Соединение
+		initialAssigned bool            // Получен хотя бы один event AssignedPartitions
+		initialCond     *sync.Cond
 	}
 
 	// Метаданные
@@ -479,9 +482,11 @@ func (c *Config) NewConsumerEx(extra misc.InterfaceMap) (client *Consumer, err e
 	}
 
 	client = &Consumer{
-		cfg:       c,
-		timeoutMS: c.timeMS(),
-		conn:      conn,
+		cfg:             c,
+		timeoutMS:       c.timeMS(),
+		conn:            conn,
+		initialAssigned: false,
+		initialCond:     sync.NewCond(new(sync.Mutex)),
 	}
 
 	return
@@ -495,6 +500,7 @@ func (c *Consumer) Close() {
 		return
 	}
 
+	c.conn.Unsubscribe()
 	c.conn.Close()
 }
 
@@ -503,6 +509,7 @@ func (c *Consumer) Close() {
 // Подписаться на топики по списку
 func (c *Consumer) Subscribe(topics []string) (err error) {
 	if misc.TEST {
+		c.initialAssigned = true
 		return nil
 	}
 
@@ -522,9 +529,18 @@ func (c *Consumer) subscribeTopics(topics []string) (err error) {
 	c.conn.SubscribeTopics(topics,
 		func(kc *kafka.Consumer, e kafka.Event) (err error) {
 			Log.Message(log.DEBUG, `Event "%T" reached (%s)`, e, e.String())
+
 			switch e.(type) {
 			case kafka.TopicPartition:
+
 			case kafka.AssignedPartitions:
+				c.initialCond.L.Lock()
+				if !c.initialAssigned {
+					c.initialAssigned = true
+					c.initialCond.Broadcast()
+				}
+				c.initialCond.L.Unlock()
+
 			case kafka.RevokedPartitions:
 			}
 			return
@@ -537,6 +553,17 @@ func (c *Consumer) subscribeTopics(topics []string) (err error) {
 // Отписаться от всех подписок
 func (c *Consumer) Unsubscribe() (err error) {
 	return c.conn.Unsubscribe()
+}
+
+// Ожидание получения первого AssignedPartitions
+func (c *Consumer) WaitingForAssign() {
+	c.initialCond.L.Lock()
+
+	for !c.initialAssigned {
+		c.initialCond.Wait()
+	}
+
+	c.initialCond.L.Unlock()
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
