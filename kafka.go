@@ -637,7 +637,11 @@ func (c *Consumer) Read(timeout config.Duration) (message *Message, err error) {
 
 	switch e := ev.(type) {
 	case *kafka.Message:
-		return (*Message)(e), nil
+		m := (*Message)(e)
+		if m.TimestampType == kafka.TimestampNotAvailable {
+			m.Timestamp = misc.NowUTC()
+		}
+		return m, nil
 
 	case kafka.PartitionEOF:
 		return nil, ErrPartitionEOF
