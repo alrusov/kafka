@@ -1,8 +1,8 @@
 github.com/alrusov/config v0.1.46 h1:hpAzuFkEYYkZBQS9bKlEBtgNEQavgscCboeI/wqBSow=
 github.com/alrusov/config v0.1.46/go.mod h1:smet+ptoCR2Rz2TvDYzaFz8iebjv7ScYD5Ac81XdVR4=
 github.com/alrusov/jsonw v0.1.1 h1:fApyxCLUXpMxCLGw7S4vCBmfXWALuX+eU4lGxmxWXMs=
-github.com/alrusov/log v0.1.31 h1:RKg1UKVAMVJ9d+pQLDYEYDYeXdAM30dFCc+0lk4w7EQ=
-github.com/alrusov/log v0.1.31/go.mod h1:oQh1gXfxlDfI+MWAigQQzCu/O9wv6mM59JXqWfj5mMc=
+github.com/alrusov/log v0.1.32 h1:9fTtwk2o4AQHfKO8erwbmuFAVl6n/+I98i8zrAlx4dU=
+github.com/alrusov/log v0.1.32/go.mod h1:oQh1gXfxlDfI+MWAigQQzCu/O9wv6mM59JXqWfj5mMc=
 github.com/alrusov/misc v0.1.45/go.mod h1:9n/TPhEOs7n3zEKP8R/TK0TIOJGISHOJe5KwKqsCsgg=
 github.com/alrusov/misc v0.1.54 h1:oxBdS1mUNz5kkcK2J0eWzmw53K2GW/Y45TJJQg86O9E=
 github.com/alrusov/misc v0.1.54/go.mod h1:kb9wxXT9lZpuQ+72uRHs3iqnMiTD3NP9wfV+jeOxHoE=
