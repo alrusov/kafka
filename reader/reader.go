@@ -13,6 +13,7 @@ import (
 	"github.com/alrusov/kafka"
 	"github.com/alrusov/log"
 	"github.com/alrusov/misc"
+	"github.com/alrusov/panic"
 )
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -107,6 +108,9 @@ func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler HandlerEx) (er
 		func(_ int, _ interface{}) {
 			ch := make(chan struct{})
 			go func() {
+				panicID := panic.ID()
+				defer panic.SaveStackToLogEx(panicID)
+
 				wg.Wait()
 				close(ch)
 			}()
@@ -128,6 +132,9 @@ func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler HandlerEx) (er
 
 // Читатель
 func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, topics []string, handler HandlerEx) {
+	panicID := panic.ID()
+	defer panic.SaveStackToLogEx(panicID)
+
 	msgSrc := kafkaCfg.Group
 	if kafkaCfg.ConsumeInSeparateThreads {
 		msgSrc = fmt.Sprintf("%s.%s", msgSrc, topics[0])
@@ -145,10 +152,10 @@ func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, to
 
 	subscribe := func() {
 		if !firstTime {
-			firstTime = false
 			conn.Unsubscribe()
 			misc.Sleep(time.Duration(kafkaCfg.Timeout))
 		}
+		firstTime = false
 
 		Log.MessageWithSource(log.INFO, msgSrc, "Try to subscribe to %v", topics)
 
@@ -158,12 +165,15 @@ func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, to
 			return
 		}
 
-		Log.MessageWithSource(log.INFO, msgSrc, "Subscribe OK")
+		Log.MessageWithSource(log.INFO, msgSrc, "Subscribe initiated")
 	}
 
 	subscribe()
 
 	go func() {
+		panicID := panic.ID()
+		defer panic.SaveStackToLogEx(panicID)
+
 		conn.WaitingForAssign()
 		handler.Assigned(topics)
 	}()

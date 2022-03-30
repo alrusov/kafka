@@ -21,6 +21,7 @@ import (
 	"github.com/alrusov/config"
 	"github.com/alrusov/log"
 	"github.com/alrusov/misc"
+	"github.com/alrusov/panic"
 )
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -424,6 +425,9 @@ func (c *Producer) SaveMessages(m Messages) (err error) {
 	msgs := misc.NewMessages()
 
 	go func() {
+		panicID := panic.ID()
+		defer panic.SaveStackToLogEx(panicID)
+
 		for e := range c.conn.Events() {
 			switch ev := e.(type) {
 			case *kafka.Message:
