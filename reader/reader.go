@@ -59,13 +59,22 @@ func (h *handlerWrapper) Assigned(topics []string) {
 
 // Start
 
-func Go(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler) (err error) {
-	return GoEx(kafkaCfg, consumerGroupID, &handlerWrapper{base: handler})
+func Go(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topics ...string) (err error) {
+	return GoEx(kafkaCfg, consumerGroupID, &handlerWrapper{base: handler}, topics...)
 }
 
-func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler HandlerEx) (err error) {
-	if len(kafkaCfg.ConsumerTopics) == 0 {
-		return fmt.Errorf("no consumer topics defined")
+func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler HandlerEx, topics ...string) (err error) {
+	if len(topics) == 0 {
+		// All consumer toipics
+		topics = make([]string, 0, len(kafkaCfg.ConsumerTopics))
+
+		for topic := range kafkaCfg.ConsumerTopics {
+			topics = append(topics, topic)
+		}
+	}
+
+	if len(topics) == 0 {
+		return fmt.Errorf("no consumer topics")
 	}
 
 	kafkaCfg.Group = consumerGroupID
@@ -84,19 +93,13 @@ func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler HandlerEx) (er
 	}
 
 	if kafkaCfg.ConsumeInSeparateThreads {
-		for topic := range kafkaCfg.ConsumerTopics {
+		for _, topic := range topics {
 			err = start([]string{topic})
 			if err != nil {
 				return
 			}
 		}
 	} else {
-		// Topics list
-		topics := make([]string, 0, len(kafkaCfg.ConsumerTopics))
-		for name := range kafkaCfg.ConsumerTopics {
-			topics = append(topics, name)
-		}
-
 		err = start(topics)
 		if err != nil {
 			return
