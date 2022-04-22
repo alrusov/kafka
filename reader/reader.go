@@ -120,9 +120,9 @@ func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler HandlerEx, top
 
 			select {
 			case <-ch:
-				Log.Message(log.INFO, "Connections closed")
+				Log.Message(log.INFO, "All connections are closed")
 			case <-time.After(time.Duration(kafkaCfg.Timeout)):
-				Log.Message(log.INFO, "Close connections timeout")
+				Log.Message(log.INFO, "Connection close timeout")
 			}
 		},
 		nil,
@@ -138,17 +138,28 @@ func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, to
 	panicID := panic.ID()
 	defer panic.SaveStackToLogEx(panicID)
 
-	msgSrc := kafkaCfg.Group
-	if kafkaCfg.ConsumeInSeparateThreads {
-		msgSrc = fmt.Sprintf("%s.%s", msgSrc, topics[0])
+	msgSrc := topics[0]
+	if len(topics) > 1 {
+		msgSrc = msgSrc + " ..."
 	}
 
 	Log.MessageWithSource(log.INFO, msgSrc, `Started`)
 
 	defer func() {
-		conn.Close() // Delayed up to 10 seconds :(
 		Log.MessageWithSource(log.INFO, msgSrc, `Stopped`)
 		wg.Done()
+	}()
+
+	go func() {
+		misc.WaitingForStop()
+
+		conn.Unsubscribe()
+		Log.MessageWithSource(log.DEBUG, msgSrc, `Unsubscribed`)
+
+		// if will be enough time
+		conn.Close()
+		Log.MessageWithSource(log.DEBUG, msgSrc, `Connection closed`)
+
 	}()
 
 	firstTime := true
@@ -184,6 +195,10 @@ func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, to
 	for misc.AppStarted() {
 		// reading with standard timeout
 		m, err := conn.Read(0)
+
+		if !misc.AppStarted() {
+			break
+		}
 
 		if err != nil {
 			switch err {
