@@ -80,6 +80,7 @@ type (
 
 	// Продюсер
 	Producer struct {
+		mutex     *sync.Mutex
 		cfg       *Config         // Конфигурация
 		timeoutMS int             // Таймаут в МИЛЛИСЕКУНДАХ
 		conn      *kafka.Producer // Соединение
@@ -395,6 +396,7 @@ func (c *Config) NewProducerEx(extra misc.InterfaceMap) (client *Producer, err e
 	}
 
 	client = &Producer{
+		mutex:     new(sync.Mutex),
 		cfg:       c,
 		timeoutMS: c.timeMS(),
 		conn:      conn,
@@ -424,15 +426,26 @@ func (c *Producer) SaveMessages(m Messages) (err error) {
 
 	msgs := misc.NewMessages()
 
+	ex := make(chan struct{})
+	defer close(ex)
+
+	c.mutex.Lock()
+
 	go func() {
 		panicID := panic.ID()
 		defer panic.SaveStackToLogEx(panicID)
 
-		for e := range c.conn.Events() {
-			switch ev := e.(type) {
-			case *kafka.Message:
-				if ev.TopicPartition.Error != nil {
-					msgs.Add("Delivery to %s failed: %s", *ev.TopicPartition.Topic, ev.TopicPartition.Error)
+		for {
+			select {
+			case <-ex:
+				c.mutex.Unlock()
+				return
+			case e := <-c.conn.Events():
+				switch ev := e.(type) {
+				case *kafka.Message:
+					if ev.TopicPartition.Error != nil {
+						msgs.Add("Delivery to %s failed: %s", *ev.TopicPartition.Topic, ev.TopicPartition.Error)
+					}
 				}
 			}
 		}
