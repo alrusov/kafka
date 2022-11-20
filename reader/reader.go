@@ -108,7 +108,7 @@ func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler HandlerEx, top
 
 	misc.AddExitFunc(
 		"kafka.reader",
-		func(_ int, _ interface{}) {
+		func(_ int, _ any) {
 			ch := make(chan struct{})
 			go func() {
 				panicID := panic.ID()

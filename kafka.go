@@ -59,7 +59,7 @@ type (
 
 		RetentionSize int64 `toml:"retention-size"` // Максимальный размер для очистки по размеру
 
-		Extra interface{} `toml:"extra"` // Произвольные дополнительные данные
+		Extra any `toml:"extra"` // Произвольные дополнительные данные
 	}
 
 	// Параметры топика консьюмера
@@ -68,7 +68,7 @@ type (
 		Type     string `toml:"type"`     // Тип топика. Произвольное необязательное значение на умотрение разработчика
 		Encoding string `toml:"encoding"` // Формат данных
 
-		Extra interface{} `toml:"extra"` // Произвольные дополнительные данные
+		Extra any `toml:"extra"` // Произвольные дополнительные данные
 	}
 
 	// Админский клиент
@@ -145,7 +145,7 @@ func (e Error) Error() string {
 //----------------------------------------------------------------------------------------------------------------------------//
 
 // Проверка валидности Config
-func (c *Config) Check(cfg interface{}) (err error) {
+func (c *Config) Check(cfg any) (err error) {
 	msgs := misc.NewMessages()
 
 	if c.Servers == "" {
@@ -196,7 +196,7 @@ func (c *Config) Check(cfg interface{}) (err error) {
 //----------------------------------------------------------------------------------------------------------------------------//
 
 // Проверка валидности ProducerTopicConfig
-func (c *ProducerTopicConfig) Check(cfg interface{}) (err error) {
+func (c *ProducerTopicConfig) Check(cfg any) (err error) {
 	msgs := misc.NewMessages()
 
 	if c.NumPartitions <= 0 {
@@ -221,7 +221,7 @@ func (c *ProducerTopicConfig) Check(cfg interface{}) (err error) {
 //----------------------------------------------------------------------------------------------------------------------------//
 
 // Проверка валидности ProducerTopicConfig
-func (c *ConsumerTopicConfig) Check(cfg interface{}) (err error) {
+func (c *ConsumerTopicConfig) Check(cfg any) (err error) {
 	msgs := misc.NewMessages()
 
 	return msgs.Error()

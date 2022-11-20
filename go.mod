@@ -1,13 +1,13 @@
 module github.com/alrusov/kafka
 
-go 1.18
+go 1.19
 
 require (
-	github.com/alrusov/config v0.1.46
-	github.com/alrusov/log v0.1.32
-	github.com/alrusov/misc v0.1.56
-	github.com/alrusov/panic v0.1.14
-	github.com/confluentinc/confluent-kafka-go v1.8.2
+	github.com/alrusov/config v0.1.47
+	github.com/alrusov/log v0.1.33
+	github.com/alrusov/misc v1.0.65
+	github.com/alrusov/panic v0.1.15
+	github.com/confluentinc/confluent-kafka-go v1.9.2
 )
 
 require (
