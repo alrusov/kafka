@@ -569,6 +569,10 @@ func (c *Consumer) subscribeTopics(topics []string) (err error) {
 
 // Отписаться от всех подписок
 func (c *Consumer) Unsubscribe() (err error) {
+	if misc.TEST {
+		return
+	}
+
 	return c.conn.Unsubscribe()
 }
 
