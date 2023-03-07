@@ -474,8 +474,12 @@ func (c *Producer) SaveMessages(m Messages) (err error) {
 
 // Создать сообщение
 func NewMessage(topic string, key []byte, value []byte) Message {
+	return NewMessageEx(topic, kafka.PartitionAny, key, value)
+}
+
+func NewMessageEx(topic string, partition int32, key []byte, value []byte) Message {
 	return Message{
-		TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
+		TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: partition},
 		Key:            key,
 		Value:          value,
 	}

@@ -1,11 +1,11 @@
 module github.com/alrusov/kafka
 
-go 1.19
+go 1.20
 
 require (
 	github.com/alrusov/config v0.1.50
-	github.com/alrusov/log v0.1.33
-	github.com/alrusov/misc v1.1.5
+	github.com/alrusov/log v0.1.36
+	github.com/alrusov/misc v1.1.6
 	github.com/alrusov/panic v0.1.15
 	github.com/confluentinc/confluent-kafka-go v1.9.2
 )
