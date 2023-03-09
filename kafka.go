@@ -50,14 +50,12 @@ type (
 	// Параметры топика продюсера
 	ProducerTopicConfig struct {
 		Active bool   `toml:"active"` // Активный?
-		Type   string `toml:"type"`   // Тип топика. Произвольное необязательное значение на умотрение разработчика
+		Type   string `toml:"type"`   // Тип топика. Произвольное необязательное значение на усмотрение разработчика
 
-		NumPartitions     int `toml:"num-partitions"`     // Количество партиций при создании
-		ReplicationFactor int `toml:"replication-factor"` // Фактор репликации при создании
-
-		RetentionTime config.Duration `toml:"retention-time"` // Время жизни данных
-
-		RetentionSize int64 `toml:"retention-size"` // Максимальный размер для очистки по размеру
+		NumPartitions     int             `toml:"num-partitions"`     // Количество партиций при создании
+		ReplicationFactor int             `toml:"replication-factor"` // Фактор репликации при создании
+		RetentionTime     config.Duration `toml:"retention-time"`     // Время жизни данных
+		RetentionSize     int64           `toml:"retention-size"`     // Максимальный размер для очистки по размеру
 
 		Extra any `toml:"extra"` // Произвольные дополнительные данные
 	}
@@ -65,8 +63,10 @@ type (
 	// Параметры топика консьюмера
 	ConsumerTopicConfig struct {
 		Active   bool   `toml:"active"`   // Активный?
-		Type     string `toml:"type"`     // Тип топика. Произвольное необязательное значение на умотрение разработчика
+		Type     string `toml:"type"`     // Тип топика. Произвольное необязательное значение на усмотрение разработчика
 		Encoding string `toml:"encoding"` // Формат данных
+
+		//Partitions []uint `toml:"partitions"` // Партиции для чтения. Если пусто, то все
 
 		Extra any `toml:"extra"` // Произвольные дополнительные данные
 	}
@@ -118,6 +118,10 @@ const (
 	OffsetEnd = Offset(kafka.OffsetEnd)
 	// Смещение - сохраненное в kafka
 	OffsetStored = Offset(kafka.OffsetStored)
+
+	// PartitionAny represents any partition (for partitioning),
+	// or unspecified value (for all other cases)
+	PartitionAny = kafka.PartitionAny
 )
 
 var (
@@ -165,27 +169,27 @@ func (c *Config) Check(cfg any) (err error) {
 	}
 
 	for key, topic := range c.ProducerTopics {
+		if !topic.Active {
+			delete(c.ProducerTopics, key)
+			continue
+		}
+
 		err = topic.Check(cfg)
 		if err != nil {
 			msgs.Add("kafka.producer-topics[%s]: %s", key, err)
 			continue
 		}
-
-		if !topic.Active {
-			delete(c.ProducerTopics, key)
-			continue
-		}
 	}
 
 	for key, topic := range c.ConsumerTopics {
-		err = topic.Check(cfg)
-		if err != nil {
-			msgs.Add("kafka.consumer-topics[%s]: %s", key, err)
+		if !topic.Active {
+			delete(c.ConsumerTopics, key)
 			continue
 		}
 
-		if !topic.Active {
-			delete(c.ConsumerTopics, key)
+		err = topic.Check(cfg)
+		if err != nil {
+			msgs.Add("kafka.consumer-topics[%s]: %s", key, err)
 			continue
 		}
 	}
@@ -474,7 +478,7 @@ func (c *Producer) SaveMessages(m Messages) (err error) {
 
 // Создать сообщение
 func NewMessage(topic string, key []byte, value []byte) Message {
-	return NewMessageEx(topic, kafka.PartitionAny, key, value)
+	return NewMessageEx(topic, PartitionAny, key, value)
 }
 
 func NewMessageEx(topic string, partition int32, key []byte, value []byte) Message {
@@ -521,7 +525,7 @@ func (c *Consumer) Close() {
 		return
 	}
 
-	c.conn.Unsubscribe()
+	c.Unsubscribe()
 	c.conn.Close()
 }
 
@@ -571,14 +575,21 @@ func (c *Consumer) subscribeTopics(topics []string) (err error) {
 	return
 }
 
+//----------------------------------------------------------------------------------------------------------------------------//
+
 // Отписаться от всех подписок
 func (c *Consumer) Unsubscribe() (err error) {
 	if misc.TEST {
 		return
 	}
 
-	return c.conn.Unsubscribe()
+	c.conn.Unsubscribe()
+	//c.conn.Unassign()
+
+	return
 }
+
+//----------------------------------------------------------------------------------------------------------------------------//
 
 // Ожидание получения первого AssignedPartitions
 func (c *Consumer) WaitingForAssign() {
