@@ -357,7 +357,7 @@ func (c *AdminClient) CreateTopic(name string, topic *ProducerTopicConfig) (err 
 				Config:            config,
 			},
 		},
-		kafka.SetAdminOperationTimeout(time.Duration(c.cfg.Timeout)),
+		kafka.SetAdminOperationTimeout(c.cfg.Timeout.D()),
 	)
 
 	return
@@ -376,7 +376,7 @@ func (c *AdminClient) DeleteTopic(topic string) (err error) {
 		[]string{
 			topic,
 		},
-		kafka.SetAdminOperationTimeout(time.Duration(c.cfg.Timeout)),
+		kafka.SetAdminOperationTimeout(c.cfg.Timeout.D()),
 	)
 
 	return
