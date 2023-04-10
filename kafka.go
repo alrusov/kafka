@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 
 	"github.com/alrusov/config"
 	"github.com/alrusov/log"

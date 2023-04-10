@@ -3,11 +3,11 @@ module github.com/alrusov/kafka
 go 1.20
 
 require (
-	github.com/alrusov/config v0.1.52
-	github.com/alrusov/log v0.1.36
+	github.com/alrusov/config v0.1.55
+	github.com/alrusov/log v0.1.37
 	github.com/alrusov/misc v1.1.8
 	github.com/alrusov/panic v0.1.15
-	github.com/confluentinc/confluent-kafka-go v1.9.2
+	github.com/confluentinc/confluent-kafka-go/v2 v2.1.0
 )
 
 require (
