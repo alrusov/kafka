@@ -7,7 +7,7 @@ require (
 	github.com/alrusov/log v0.1.37
 	github.com/alrusov/misc v1.1.8
 	github.com/alrusov/panic v0.1.15
-	github.com/confluentinc/confluent-kafka-go/v2 v2.1.0
+	github.com/confluentinc/confluent-kafka-go v1.9.2
 )
 
 require (

@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
+	"github.com/confluentinc/confluent-kafka-go/kafka"
 
 	"github.com/alrusov/config"
 	"github.com/alrusov/log"
@@ -671,7 +671,7 @@ func (c *Consumer) Read(timeout time.Duration) (message *Message, err error) {
 	m, err := c.conn.ReadMessage(timeout)
 	if err != nil {
 		if e, ok := err.(kafka.Error); ok {
-			if e.Code() == -185 { // RD_KAFKA_RESP_ERR__TIMED_OUT
+			if e.Code() == kafka.ErrTimedOut {
 				return nil, nil
 			}
 		}
