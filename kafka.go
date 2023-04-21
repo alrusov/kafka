@@ -11,7 +11,6 @@ package kafka
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -74,6 +73,7 @@ type (
 	// Админский клиент
 	AdminClient struct {
 		cfg       *Config            // Конфигурация
+		timeout   time.Duration      // Таймаут
 		timeoutMS int                // Таймаут в МИЛЛИСЕКУНДАХ
 		conn      *kafka.AdminClient // Соединение
 	}
@@ -82,6 +82,7 @@ type (
 	Producer struct {
 		mutex     *sync.Mutex
 		cfg       *Config         // Конфигурация
+		timeout   time.Duration   // Таймаут
 		timeoutMS int             // Таймаут в МИЛЛИСЕКУНДАХ
 		conn      *kafka.Producer // Соединение
 	}
@@ -89,6 +90,7 @@ type (
 	// консьюмер
 	Consumer struct {
 		cfg             *Config         // Конфигурация
+		timeout         time.Duration   // Таймаут
 		timeoutMS       int             // Таймаут в МИЛЛИСЕКУНДАХ
 		conn            *kafka.Consumer // Соединение
 		initialAssigned bool            // Получен хотя бы один event AssignedPartitions
@@ -290,6 +292,7 @@ func (c *Config) NewAdminEx(extra misc.InterfaceMap) (client *AdminClient, err e
 
 	client = &AdminClient{
 		cfg:       c,
+		timeout:   c.Timeout.D(),
 		timeoutMS: c.timeMS(),
 		conn:      conn,
 	}
@@ -402,6 +405,7 @@ func (c *Config) NewProducerEx(extra misc.InterfaceMap) (client *Producer, err e
 	client = &Producer{
 		mutex:     new(sync.Mutex),
 		cfg:       c,
+		timeout:   c.Timeout.D(),
 		timeoutMS: c.timeMS(),
 		conn:      conn,
 	}
@@ -508,6 +512,7 @@ func (c *Config) NewConsumerEx(extra misc.InterfaceMap) (client *Consumer, err e
 
 	client = &Consumer{
 		cfg:             c,
+		timeout:         c.Timeout.D(),
 		timeoutMS:       c.timeMS(),
 		conn:            conn,
 		initialAssigned: false,
@@ -654,40 +659,62 @@ func (c *Consumer) Seek(topic string, offset Offset) (err error) {
 //----------------------------------------------------------------------------------------------------------------------------//
 
 // Получить сообщение из топика, если оно там есть
-func (c *Consumer) Read(timeout config.Duration) (message *Message, err error) {
+func (c *Consumer) Read(timeout time.Duration) (message *Message, err error) {
 	if misc.TEST {
 		return nil, nil
 	}
 
-	tMS := c.timeoutMS
-
-	if timeout > 0 {
-		tMS = timeMS(timeout)
+	if timeout <= 0 {
+		timeout = c.timeout
 	}
 
-	ev := c.conn.Poll(tMS)
-	if ev == nil {
-		// Ничего нет
-		return nil, nil
-	}
-
-	switch e := ev.(type) {
-	case *kafka.Message:
-		m := (*Message)(e)
-		if m.TimestampType == kafka.TimestampNotAvailable {
-			m.Timestamp = misc.NowUTC()
+	m, err := c.conn.ReadMessage(timeout)
+	if err != nil {
+		if e, ok := err.(*kafka.Error); ok {
+			if e.Code() == -185 { // RD_KAFKA_RESP_ERR__TIMED_OUT
+				return nil, nil
+			}
 		}
-		return m, nil
 
-	case kafka.PartitionEOF:
-		return nil, ErrPartitionEOF
-
-	case kafka.Error:
-		return nil, Error(e)
-
-	default:
-		return nil, fmt.Errorf("unknown error")
+		return nil, err
 	}
+
+	if m.TimestampType == kafka.TimestampNotAvailable {
+		m.Timestamp = misc.NowUTC()
+	}
+
+	message = (*Message)(m)
+
+	return
+
+	/*
+		ev := c.conn.Poll(tMS)
+		if ev == nil {
+			// Ничего нет
+			return nil, nil
+		}
+
+		switch e := ev.(type) {
+		case *kafka.Message:
+			m := (*Message)(e)
+			if m.TimestampType == kafka.TimestampNotAvailable {
+				m.Timestamp = misc.NowUTC()
+			}
+			if e.TopicPartition.Error != nil {
+				return m, e.TopicPartition.Error
+			}
+			return m, nil
+
+		case kafka.PartitionEOF:
+			return nil, ErrPartitionEOF
+
+		case kafka.Error:
+			return nil, Error(e)
+
+		default:
+			return nil, fmt.Errorf("unknown error")
+		}
+	*/
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
