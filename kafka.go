@@ -670,7 +670,7 @@ func (c *Consumer) Read(timeout time.Duration) (message *Message, err error) {
 
 	m, err := c.conn.ReadMessage(timeout)
 	if err != nil {
-		if e, ok := err.(*kafka.Error); ok {
+		if e, ok := err.(kafka.Error); ok {
 			if e.Code() == -185 { // RD_KAFKA_RESP_ERR__TIMED_OUT
 				return nil, nil
 			}
