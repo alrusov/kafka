@@ -4,8 +4,8 @@ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03
 github.com/actgardner/gogen-avro/v10 v10.1.0/go.mod h1:o+ybmVjEa27AAr35FRqU98DJu1fXES56uXniYFv4yDA=
 github.com/actgardner/gogen-avro/v10 v10.2.1/go.mod h1:QUhjeHPchheYmMDni/Nx7VB0RsT/ee8YIgGY/xpEQgQ=
 github.com/actgardner/gogen-avro/v9 v9.1.0/go.mod h1:nyTj6wPqDJoxM3qdnjcLv+EnMDSDFqE0qDpva2QRmKc=
-github.com/alrusov/config v0.1.55 h1:LBs/EoCm7nADRfRJC8wJ7ovERZKXHwWv5WL6s/DglbA=
-github.com/alrusov/config v0.1.55/go.mod h1:aZnBFi6jVQRWkROYs0m4arhhD6++cLd4J0iep0EEbvM=
+github.com/alrusov/config v0.1.56 h1:sd4mAejsS147QqisddjLV5SBTSkDqqbyPwbtxVCRy3M=
+github.com/alrusov/config v0.1.56/go.mod h1:aZnBFi6jVQRWkROYs0m4arhhD6++cLd4J0iep0EEbvM=
 github.com/alrusov/jsonw v0.1.3 h1:662GZ/2/Ym5hN4z0ut6EbvmdnXfaIK7vSRslmnFpGXw=
 github.com/alrusov/log v0.1.37 h1:xuNPxHLLK65ILvh9kEUdYoGjo9ABNbBVw8dw0niJ3jg=
 github.com/alrusov/log v0.1.37/go.mod h1:bMu3alaOTknnjHs4SFBVmZo0V5QgOgY8iN/ydj/pLVg=

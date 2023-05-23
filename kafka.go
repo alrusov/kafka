@@ -11,6 +11,7 @@ package kafka
 import (
 	"context"
 	"errors"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -44,6 +45,9 @@ type (
 		ConsumeInSeparateThreads bool                            `toml:"consume-in-separate-threads"` // Обрабатывать каждый топик в отдельном потоке
 		ProducerTopics           map[string]*ProducerTopicConfig `toml:"producer-topics"`             // Список топиков продюсера с их параметрами map[virtualName]*config
 		ConsumerTopics           map[string]*ConsumerTopicConfig `toml:"consumer-topics"`             // Список топиков консьюмера с их параметрами map[virtualName]*config
+
+		Consumer *Consumer `toml:"-"`
+		Producer *Producer `toml:"-"`
 	}
 
 	// Параметры топика продюсера
@@ -95,7 +99,15 @@ type (
 		conn            *kafka.Consumer // Соединение
 		initialAssigned bool            // Получен хотя бы один event AssignedPartitions
 		initialCond     *sync.Cond
+		partitionsMap   assignedPartitionsMap
+		partitions      AssignedPartitions
 	}
+
+	assignedPartitionsMap     map[string]assignedPartitionsMapList
+	assignedPartitionsMapList map[int]bool
+
+	AssignedPartitions     map[string]AssignedPartitionsList
+	AssignedPartitionsList []int
 
 	// Метаданные
 	Metadata kafka.Metadata
@@ -393,6 +405,10 @@ func (c *Config) NewProducer() (client *Producer, err error) {
 }
 
 func (c *Config) NewProducerEx(extra misc.InterfaceMap) (client *Producer, err error) {
+	defer func() {
+		c.Producer = client
+	}()
+
 	conn := (*kafka.Producer)(nil)
 
 	if !misc.TEST {
@@ -501,6 +517,10 @@ func (c *Config) NewConsumer() (client *Consumer, err error) {
 }
 
 func (c *Config) NewConsumerEx(extra misc.InterfaceMap) (client *Consumer, err error) {
+	defer func() {
+		c.Consumer = client
+	}()
+
 	conn := (*kafka.Consumer)(nil)
 
 	if !misc.TEST {
@@ -517,6 +537,8 @@ func (c *Config) NewConsumerEx(extra misc.InterfaceMap) (client *Consumer, err e
 		conn:            conn,
 		initialAssigned: false,
 		initialCond:     sync.NewCond(new(sync.Mutex)),
+		partitionsMap:   make(assignedPartitionsMap, 128),
+		partitions:      make(AssignedPartitions, 128),
 	}
 
 	return
@@ -537,6 +559,7 @@ func (c *Consumer) Close() {
 //----------------------------------------------------------------------------------------------------------------------------//
 
 // Подписаться на топики по списку
+
 func (c *Consumer) Subscribe(topics []string) (err error) {
 	if misc.TEST {
 		c.initialAssigned = true
@@ -556,28 +579,68 @@ func (c *Consumer) Subscribe(topics []string) (err error) {
 }
 
 func (c *Consumer) subscribeTopics(topics []string) (err error) {
+	if len(topics) == 0 {
+		c.assign(true, nil)
+		return
+	}
+
 	c.conn.SubscribeTopics(topics,
 		func(kc *kafka.Consumer, e kafka.Event) (err error) {
 			Log.Message(log.DEBUG, `Event "%T" reached (%s)`, e, e.String())
 
-			switch e.(type) {
+			switch e := e.(type) {
 			case kafka.TopicPartition:
 
 			case kafka.AssignedPartitions:
-				c.initialCond.L.Lock()
-				if !c.initialAssigned {
-					c.initialAssigned = true
-					c.initialCond.Broadcast()
-				}
-				c.initialCond.L.Unlock()
+				c.assign(true, e.Partitions)
 
 			case kafka.RevokedPartitions:
+				c.assign(false, e.Partitions)
 			}
 			return
 		},
 	)
 
 	return
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+func (c *Consumer) assign(assigned bool, partitions []kafka.TopicPartition) {
+	c.initialCond.L.Lock()
+	defer c.initialCond.L.Unlock()
+
+	for _, t := range partitions {
+		list, exists := c.partitionsMap[*t.Topic]
+		if !exists {
+			if !assigned {
+				continue
+			}
+			list = make(assignedPartitionsMapList, 128)
+		}
+
+		list[int(t.Partition)] = assigned
+
+		c.partitionsMap[*t.Topic] = list
+	}
+
+	c.partitions = make(AssignedPartitions, len(c.partitionsMap))
+	for topic, list := range c.partitionsMap {
+		c.partitions[topic] = make(AssignedPartitionsList, 0, len(list))
+		for n, status := range list {
+			if !status {
+				continue
+			}
+			c.partitions[topic] = append(c.partitions[topic], n)
+		}
+
+		sort.Ints(c.partitions[topic])
+	}
+
+	if assigned && !c.initialAssigned {
+		c.initialAssigned = true
+		c.initialCond.Broadcast()
+	}
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -599,12 +662,20 @@ func (c *Consumer) Unsubscribe() (err error) {
 // Ожидание получения первого AssignedPartitions
 func (c *Consumer) WaitingForAssign() {
 	c.initialCond.L.Lock()
+	defer c.initialCond.L.Unlock()
 
 	for !c.initialAssigned {
 		c.initialCond.Wait()
 	}
+}
 
-	c.initialCond.L.Unlock()
+//----------------------------------------------------------------------------------------------------------------------------//
+
+func (c *Consumer) AssignedPartitions() AssignedPartitions {
+	c.initialCond.L.Lock()
+	defer c.initialCond.L.Unlock()
+
+	return c.partitions
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
