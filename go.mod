@@ -1,4 +1,4 @@
-module github.com/alrusov/kafka
+module github.com/alrusov/kafka/v2
 
 go 1.20
 

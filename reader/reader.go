@@ -4,13 +4,12 @@ kafka reader
 package reader
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/alrusov/kafka"
+	"github.com/alrusov/kafka/v2"
 	"github.com/alrusov/log"
 	"github.com/alrusov/misc"
 	"github.com/alrusov/panic"
@@ -20,15 +19,17 @@ import (
 
 type (
 	Handler interface {
-		Processor(id uint64, topic string, key string, data []byte) (err error)
-		SetResult(id uint64, err error) (doRetry bool)
+		Assigned(conn *kafka.Consumer, topics []string)
+		Processor(id uint64, topic string, m *kafka.Message) (action Action, err error)
 	}
 
-	HandlerEx interface {
-		Processor(id uint64, topic string, m *kafka.Message) (ctx context.Context, err error)
-		SetResult(ctx context.Context, id uint64, err error) (doRetry bool)
-		Assigned(topics []string)
-	}
+	Action int
+)
+
+const (
+	ActionRetry Action = iota
+	ActionCommit
+	ActionBreak
 )
 
 var (
@@ -39,31 +40,9 @@ var (
 
 //----------------------------------------------------------------------------------------------------------------------------//
 
-type handlerWrapper struct {
-	base Handler
-}
-
-func (h *handlerWrapper) Processor(id uint64, topic string, m *kafka.Message) (ctx context.Context, err error) {
-	err = h.base.Processor(id, topic, string(m.Key), m.Value)
-	return nil, err
-}
-
-func (h *handlerWrapper) SetResult(ctx context.Context, id uint64, err error) (doRetry bool) {
-	return h.base.SetResult(id, err)
-}
-
-func (h *handlerWrapper) Assigned(topics []string) {
-}
-
-//----------------------------------------------------------------------------------------------------------------------------//
-
 // Start
 
 func Go(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topics ...string) (err error) {
-	return GoEx(kafkaCfg, consumerGroupID, &handlerWrapper{base: handler}, topics...)
-}
-
-func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler HandlerEx, topics ...string) (err error) {
 	if len(topics) == 0 {
 		// All consumer toipics
 		topics = make([]string, 0, len(kafkaCfg.ConsumerTopics))
@@ -134,7 +113,7 @@ func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler HandlerEx, top
 //----------------------------------------------------------------------------------------------------------------------------//
 
 // Читатель
-func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, topics []string, handler HandlerEx) {
+func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, topics []string, handler Handler) {
 	panicID := panic.ID()
 	defer panic.SaveStackToLogEx(panicID)
 
@@ -189,7 +168,7 @@ func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, to
 		defer panic.SaveStackToLogEx(panicID)
 
 		conn.WaitingForAssign()
-		handler.Assigned(topics)
+		handler.Assigned(conn, topics)
 	}()
 
 	for misc.AppStarted() {
@@ -225,26 +204,46 @@ func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, to
 			log.MessageWithSource(log.TRACE4, msgSrc, "[%d] Received %s.%d: %s = %s", id, *m.TopicPartition.Topic, m.TopicPartition.Partition, m.Key, m.Value)
 		}
 
-		var doRetry bool
-		var ctx context.Context
+		func() {
+			doCommit := false
 
-		for misc.AppStarted() {
-			ctx, err = handler.Processor(id, *m.TopicPartition.Topic, m)
-			if err != nil {
-				Log.MessageWithSource(log.ERR, msgSrc, "[%d] Processor: %s", id, err)
-			}
-
-			doRetry = handler.SetResult(ctx, id, err)
-			if !doRetry {
-				err = conn.Commit(m)
-				if err != nil {
-					Log.MessageWithSource(log.ERR, msgSrc, "[%d] Commit: %s", id, err)
+			defer func() {
+				if doCommit {
+					err = conn.Commit(m)
+					if err != nil {
+						Log.MessageWithSource(log.ERR, msgSrc, "[%d] Commit: %s", id, err)
+					}
 				}
-				break
-			}
+			}()
 
-			misc.Sleep(time.Duration(kafkaCfg.RetryTimeout))
-		}
+			for misc.AppStarted() {
+				action, err := handler.Processor(id, *m.TopicPartition.Topic, m)
+				if err != nil {
+					Log.MessageWithSource(log.ERR, msgSrc, "[%d] Processor: %s", id, err)
+					doCommit = true
+					return
+				}
+
+				switch action {
+				case ActionRetry:
+					misc.Sleep(time.Duration(kafkaCfg.RetryTimeout))
+					continue
+
+				case ActionCommit:
+					doCommit = true
+					return
+
+				case ActionBreak:
+					doCommit = false
+					return
+
+				default:
+					log.MessageWithSource(log.ERR, msgSrc, "[%d] SetResult returns unsupported Action=%d", id, action)
+					doCommit = true
+					return
+				}
+			}
+		}()
 	}
 }
 
