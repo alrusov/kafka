@@ -45,9 +45,6 @@ type (
 		ConsumeInSeparateThreads bool                            `toml:"consume-in-separate-threads"` // Обрабатывать каждый топик в отдельном потоке
 		ProducerTopics           map[string]*ProducerTopicConfig `toml:"producer-topics"`             // Список топиков продюсера с их параметрами map[virtualName]*config
 		ConsumerTopics           map[string]*ConsumerTopicConfig `toml:"consumer-topics"`             // Список топиков консьюмера с их параметрами map[virtualName]*config
-
-		Consumer *Consumer `toml:"-"`
-		Producer *Producer `toml:"-"`
 	}
 
 	// Параметры топика продюсера
@@ -144,6 +141,9 @@ var (
 
 	// Ошибка - конец данных
 	ErrPartitionEOF = errors.New("partition EOF")
+
+	consumersMutex = new(sync.RWMutex)
+	consumers      = make([]*Consumer, 0, 128)
 )
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -405,10 +405,6 @@ func (c *Config) NewProducer() (client *Producer, err error) {
 }
 
 func (c *Config) NewProducerEx(extra misc.InterfaceMap) (client *Producer, err error) {
-	defer func() {
-		c.Producer = client
-	}()
-
 	conn := (*kafka.Producer)(nil)
 
 	if !misc.TEST {
@@ -517,10 +513,6 @@ func (c *Config) NewConsumer() (client *Consumer, err error) {
 }
 
 func (c *Config) NewConsumerEx(extra misc.InterfaceMap) (client *Consumer, err error) {
-	defer func() {
-		c.Consumer = client
-	}()
-
 	conn := (*kafka.Consumer)(nil)
 
 	if !misc.TEST {
@@ -540,6 +532,10 @@ func (c *Config) NewConsumerEx(extra misc.InterfaceMap) (client *Consumer, err e
 		partitionsMap:   make(assignedPartitionsMap, 128),
 		partitions:      make(AssignedPartitions, 128),
 	}
+
+	consumersMutex.Lock()
+	consumers = append(consumers, client)
+	consumersMutex.Unlock()
 
 	return
 }
@@ -671,15 +667,6 @@ func (c *Consumer) WaitingForAssign() {
 
 //----------------------------------------------------------------------------------------------------------------------------//
 
-func (c *Consumer) AssignedPartitions() AssignedPartitions {
-	c.initialCond.L.Lock()
-	defer c.initialCond.L.Unlock()
-
-	return c.partitions
-}
-
-//----------------------------------------------------------------------------------------------------------------------------//
-
 // Получить текущие смещения для списка топиков
 func (c *Consumer) Offsets(topics []string) (offsets []Offset, err error) {
 	if misc.TEST {
@@ -797,6 +784,28 @@ func (c *Consumer) Commit(message *Message) (err error) {
 	}
 
 	_, err = c.conn.CommitMessage((*kafka.Message)(message))
+	return
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+func GetAssignedPartitions() (partMap AssignedPartitions) {
+	partMap = make(AssignedPartitions, 128)
+
+	consumersMutex.RLock()
+	defer consumersMutex.RLock()
+
+	for _, c := range consumers {
+		for topic, p := range c.partitions {
+			dst, exists := partMap[topic]
+			if !exists {
+				dst = make(AssignedPartitionsList, 0, 128)
+			}
+
+			partMap[topic] = append(dst, p...)
+		}
+	}
+
 	return
 }
 
