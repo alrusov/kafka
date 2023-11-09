@@ -220,8 +220,6 @@ func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, to
 				action, err := handler.Processor(id, *m.TopicPartition.Topic, m)
 				if err != nil {
 					Log.MessageWithSource(log.ERR, msgSrc, "[%d] Processor: %s", id, err)
-					doCommit = true
-					return
 				}
 
 				switch action {
