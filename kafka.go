@@ -49,8 +49,9 @@ type (
 
 	// Параметры топика продюсера
 	ProducerTopicConfig struct {
-		Active bool   `toml:"active"` // Активный?
-		Type   string `toml:"type"`   // Тип топика. Произвольное необязательное значение на усмотрение разработчика
+		Active   bool   `toml:"active"`   // Активный?
+		Type     string `toml:"type"`     // Тип топика. Произвольное необязательное значение на усмотрение разработчика
+		Encoding string `toml:"encoding"` // Формат данных
 
 		NumPartitions     int             `toml:"num-partitions"`     // Количество партиций при создании
 		ReplicationFactor int             `toml:"replication-factor"` // Фактор репликации при создании
