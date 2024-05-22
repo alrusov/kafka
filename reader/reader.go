@@ -5,6 +5,7 @@ package reader
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +25,16 @@ type (
 	}
 
 	Action int
+
+	Reader struct {
+		id       uint64
+		active   bool
+		wg       *sync.WaitGroup
+		kafkaCfg *kafka.Config
+		conn     *kafka.Consumer
+		topics   []string
+		handler  Handler
+	}
 )
 
 const (
@@ -35,7 +46,8 @@ const (
 var (
 	Log = log.NewFacility("kafka.reader") // Log facility
 
-	lastID = uint64(0)
+	lastReaderID = uint64(0)
+	lastProcID   = uint64(0)
 )
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -43,6 +55,11 @@ var (
 // Start
 
 func Go(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topics ...string) (err error) {
+	_, err = GoEx(kafkaCfg, consumerGroupID, handler, topics...)
+	return
+}
+
+func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topics ...string) (rds map[string]*Reader, err error) {
 	if len(topics) == 0 {
 		// All consumer toipics
 		topics = make([]string, 0, len(kafkaCfg.ConsumerTopics))
@@ -53,10 +70,17 @@ func Go(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topics 
 	}
 
 	if len(topics) == 0 {
-		return fmt.Errorf("no consumer topics")
+		err = fmt.Errorf("no consumer topics")
+		return
 	}
 
 	kafkaCfg.Group = consumerGroupID
+
+	n := 1
+	if kafkaCfg.ConsumeInSeparateThreads {
+		n = len(topics)
+	}
+	rds = make(map[string]*Reader, n)
 
 	wg := new(sync.WaitGroup)
 
@@ -67,7 +91,20 @@ func Go(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topics 
 		}
 
 		wg.Add(1)
-		go reader(wg, kafkaCfg, conn, topics, handler)
+
+		rd := &Reader{
+			id:       atomic.AddUint64(&lastReaderID, 1),
+			active:   true,
+			wg:       wg,
+			kafkaCfg: kafkaCfg,
+			conn:     conn,
+			topics:   topics,
+			handler:  handler,
+		}
+
+		rds[strings.Join(topics, ",")] = rd
+
+		go rd.do()
 		return
 	}
 
@@ -112,31 +149,38 @@ func Go(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topics 
 
 //----------------------------------------------------------------------------------------------------------------------------//
 
+func (rd *Reader) Stop() {
+	rd.active = false
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
 // Читатель
-func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, topics []string, handler Handler) {
+func (rd *Reader) do() {
 	panicID := panic.ID()
 	defer panic.SaveStackToLogEx(panicID)
 
-	msgSrc := topics[0]
-	if len(topics) > 1 {
+	msgSrc := rd.topics[0]
+	if len(rd.topics) > 1 {
 		msgSrc = msgSrc + " ..."
 	}
+	msgSrc = fmt.Sprintf("[%d] %s", rd.id, msgSrc)
 
 	Log.MessageWithSource(log.INFO, msgSrc, `Started`)
 
 	defer func() {
 		Log.MessageWithSource(log.INFO, msgSrc, `Stopped`)
-		wg.Done()
+		rd.wg.Done()
 	}()
 
 	go func() {
 		misc.WaitingForStop()
 
-		conn.Unsubscribe()
+		rd.conn.Unsubscribe()
 		Log.MessageWithSource(log.DEBUG, msgSrc, `Unsubscribed`)
 
 		// if will be enough time
-		conn.Close()
+		rd.conn.Close()
 		Log.MessageWithSource(log.DEBUG, msgSrc, `Connection closed`)
 
 	}()
@@ -145,14 +189,14 @@ func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, to
 
 	subscribe := func() {
 		if !firstTime {
-			conn.Unsubscribe()
-			misc.Sleep(time.Duration(kafkaCfg.Timeout))
+			rd.conn.Unsubscribe()
+			misc.Sleep(time.Duration(rd.kafkaCfg.Timeout))
 		}
 		firstTime = false
 
-		Log.MessageWithSource(log.INFO, msgSrc, "Try to subscribe to %v", topics)
+		Log.MessageWithSource(log.INFO, msgSrc, "Try to subscribe to %v", rd.topics)
 
-		err := conn.Subscribe(topics)
+		err := rd.conn.Subscribe(rd.topics)
 		if err != nil {
 			Log.MessageWithSource(log.ERR, msgSrc, "Subscribe: %s", err)
 			return
@@ -167,13 +211,13 @@ func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, to
 		panicID := panic.ID()
 		defer panic.SaveStackToLogEx(panicID)
 
-		conn.WaitingForAssign()
-		handler.Assigned(conn, topics)
+		rd.conn.WaitingForAssign()
+		rd.handler.Assigned(rd.conn, rd.topics)
 	}()
 
-	for misc.AppStarted() {
+	for misc.AppStarted() && rd.active {
 		// reading with standard timeout
-		m, err := conn.Read(0)
+		m, err := rd.conn.Read(0)
 
 		if !misc.AppStarted() {
 			break
@@ -198,7 +242,7 @@ func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, to
 			continue
 		}
 
-		id := atomic.AddUint64(&lastID, 1)
+		id := atomic.AddUint64(&lastProcID, 1)
 
 		if Log.CurrentLogLevel() >= log.TRACE4 {
 			log.MessageWithSource(log.TRACE4, msgSrc, "[%d] Received %s.%d: %s = %s", id, *m.TopicPartition.Topic, m.TopicPartition.Partition, m.Key, m.Value)
@@ -209,7 +253,7 @@ func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, to
 
 			defer func() {
 				if doCommit {
-					err = conn.Commit(m)
+					err = rd.conn.Commit(m)
 					if err != nil {
 						Log.MessageWithSource(log.ERR, msgSrc, "[%d] Commit: %s", id, err)
 					}
@@ -217,14 +261,14 @@ func reader(wg *sync.WaitGroup, kafkaCfg *kafka.Config, conn *kafka.Consumer, to
 			}()
 
 			for misc.AppStarted() {
-				action, err := handler.Processor(id, *m.TopicPartition.Topic, m)
+				action, err := rd.handler.Processor(id, *m.TopicPartition.Topic, m)
 				if err != nil {
 					Log.MessageWithSource(log.ERR, msgSrc, "[%d] Processor: %s", id, err)
 				}
 
 				switch action {
 				case ActionRetry:
-					misc.Sleep(time.Duration(kafkaCfg.RetryTimeout))
+					misc.Sleep(time.Duration(rd.kafkaCfg.RetryTimeout))
 					continue
 
 				case ActionCommit:
