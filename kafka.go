@@ -82,7 +82,7 @@ type (
 
 	// Продюсер
 	Producer struct {
-		mutex     *sync.Mutex
+		sync.Mutex
 		cfg       *Config         // Конфигурация
 		timeout   time.Duration   // Таймаут
 		timeoutMS int             // Таймаут в МИЛЛИСЕКУНДАХ
@@ -143,7 +143,7 @@ var (
 	// Ошибка - конец данных
 	ErrPartitionEOF = errors.New("partition EOF")
 
-	consumersMutex = new(sync.RWMutex)
+	consumersMutex sync.RWMutex
 	consumers      = make([]*Consumer, 0, 128)
 )
 
@@ -416,7 +416,6 @@ func (c *Config) NewProducerEx(extra misc.InterfaceMap) (client *Producer, err e
 	}
 
 	client = &Producer{
-		mutex:     new(sync.Mutex),
 		cfg:       c,
 		timeout:   c.Timeout.D(),
 		timeoutMS: c.timeMS(),
@@ -450,7 +449,7 @@ func (c *Producer) SaveMessages(m Messages) (err error) {
 	ex := make(chan struct{})
 	defer close(ex)
 
-	c.mutex.Lock()
+	c.Lock()
 
 	go func() {
 		panicID := panic.ID()
@@ -459,7 +458,7 @@ func (c *Producer) SaveMessages(m Messages) (err error) {
 		for {
 			select {
 			case <-ex:
-				c.mutex.Unlock()
+				c.Unlock()
 				return
 			case e := <-c.conn.Events():
 				switch ev := e.(type) {
@@ -794,7 +793,7 @@ func GetAssignedPartitions() (partMap AssignedPartitions) {
 	partMap = make(AssignedPartitions, 128)
 
 	consumersMutex.RLock()
-	defer consumersMutex.RLock()
+	defer consumersMutex.RUnlock()
 
 	for _, c := range consumers {
 		for topic, p := range c.partitions {
