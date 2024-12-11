@@ -11,6 +11,8 @@ package kafka
 import (
 	"context"
 	"errors"
+	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -91,20 +93,18 @@ type (
 
 	// консьюмер
 	Consumer struct {
+		sync.Mutex
 		cfg             *Config         // Конфигурация
 		timeout         time.Duration   // Таймаут
 		timeoutMS       int             // Таймаут в МИЛЛИСЕКУНДАХ
 		conn            *kafka.Consumer // Соединение
 		initialAssigned bool            // Получен хотя бы один event AssignedPartitions
 		initialCond     *sync.Cond
-		partitionsMap   assignedPartitionsMap
 		partitions      AssignedPartitions
+		eventHandlers   []EventHandler
 	}
 
-	assignedPartitionsMap     map[string]assignedPartitionsMapList
-	assignedPartitionsMapList map[int]bool
-
-	AssignedPartitions     map[string]AssignedPartitionsList
+	AssignedPartitions     map[string]AssignedPartitionsList // [topic]
 	AssignedPartitionsList []int
 
 	// Метаданные
@@ -121,6 +121,11 @@ type (
 
 	// Ошибка
 	Error kafka.Error
+
+	TopicPartition  kafka.TopicPartition
+	TopicPartitions kafka.TopicPartitions
+
+	EventHandler func(c *Consumer, assigned bool, partitions TopicPartitions)
 )
 
 const (
@@ -144,7 +149,7 @@ var (
 	ErrPartitionEOF = errors.New("partition EOF")
 
 	consumersMutex sync.RWMutex
-	consumers      = make([]*Consumer, 0, 128)
+	consumers      = make(map[string]*Consumer, 128) // [servers]
 )
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -529,12 +534,10 @@ func (c *Config) NewConsumerEx(extra misc.InterfaceMap) (client *Consumer, err e
 		conn:            conn,
 		initialAssigned: false,
 		initialCond:     sync.NewCond(new(sync.Mutex)),
-		partitionsMap:   make(assignedPartitionsMap, 128),
-		partitions:      make(AssignedPartitions, 128),
 	}
 
 	consumersMutex.Lock()
-	consumers = append(consumers, client)
+	consumers[c.Servers] = client
 	consumersMutex.Unlock()
 
 	return
@@ -576,7 +579,7 @@ func (c *Consumer) Subscribe(topics []string) (err error) {
 
 func (c *Consumer) subscribeTopics(topics []string) (err error) {
 	if len(topics) == 0 {
-		c.assign(true, nil)
+		c.assignPartitions(true, nil)
 		return
 	}
 
@@ -588,10 +591,10 @@ func (c *Consumer) subscribeTopics(topics []string) (err error) {
 			case kafka.TopicPartition:
 
 			case kafka.AssignedPartitions:
-				c.assign(true, e.Partitions)
+				c.assignPartitions(true, e.Partitions)
 
 			case kafka.RevokedPartitions:
-				c.assign(false, e.Partitions)
+				c.assignPartitions(false, e.Partitions)
 			}
 			return
 		},
@@ -602,32 +605,47 @@ func (c *Consumer) subscribeTopics(topics []string) (err error) {
 
 //----------------------------------------------------------------------------------------------------------------------------//
 
-func (c *Consumer) assign(assigned bool, partitions []kafka.TopicPartition) {
-	c.initialCond.L.Lock()
-	defer c.initialCond.L.Unlock()
+func (c *Consumer) assignPartitions(assigned bool, partitions TopicPartitions) {
+	c.Lock()
 
-	for _, t := range partitions {
-		list, exists := c.partitionsMap[*t.Topic]
+	defer func() {
+		c.Unlock()
+
+		for _, eh := range c.eventHandlers {
+			eh(c, assigned, partitions)
+		}
+	}()
+
+	m := make(map[string]map[int]bool, len(c.partitions)) // [topic][partition]active
+	for topic, parts := range c.partitions {
+		partsMap := make(map[int]bool, len(parts))
+		for _, partNum := range parts {
+			partsMap[partNum] = true
+		}
+		m[topic] = partsMap
+	}
+
+	for _, tp := range partitions {
+		partsMap, exists := m[*tp.Topic]
 		if !exists {
 			if !assigned {
 				continue
 			}
-			list = make(assignedPartitionsMapList, 128)
+			partsMap = make(map[int]bool, 128)
+			m[*tp.Topic] = partsMap
 		}
 
-		list[int(t.Partition)] = assigned
-
-		c.partitionsMap[*t.Topic] = list
+		partsMap[int(tp.Partition)] = assigned
 	}
 
-	c.partitions = make(AssignedPartitions, len(c.partitionsMap))
-	for topic, list := range c.partitionsMap {
-		c.partitions[topic] = make(AssignedPartitionsList, 0, len(list))
-		for n, status := range list {
+	c.partitions = make(AssignedPartitions, len(m))
+	for topic, partsMap := range m {
+		c.partitions[topic] = make(AssignedPartitionsList, 0, len(partsMap))
+		for partNum, status := range partsMap {
 			if !status {
 				continue
 			}
-			c.partitions[topic] = append(c.partitions[topic], n)
+			c.partitions[topic] = append(c.partitions[topic], partNum)
 		}
 
 		sort.Ints(c.partitions[topic])
@@ -649,7 +667,6 @@ func (c *Consumer) Unsubscribe() (err error) {
 
 	c.conn.Unsubscribe()
 	//c.conn.Unassign()
-
 	return
 }
 
@@ -789,21 +806,53 @@ func (c *Consumer) Commit(message *Message) (err error) {
 
 //----------------------------------------------------------------------------------------------------------------------------//
 
-func GetAssignedPartitions() (partMap AssignedPartitions) {
-	partMap = make(AssignedPartitions, 128)
+func (c *Consumer) AddEventHandler(h EventHandler) {
+	c.Lock()
+	defer c.Unlock()
 
-	consumersMutex.RLock()
-	defer consumersMutex.RUnlock()
+	c.delEventHandler(h)
+	c.eventHandlers = append(c.eventHandlers, h)
+}
 
-	for _, c := range consumers {
-		for topic, p := range c.partitions {
-			dst, exists := partMap[topic]
-			if !exists {
-				dst = make(AssignedPartitionsList, 0, 128)
-			}
+func (c *Consumer) DelEventHandler(h EventHandler) {
+	c.Lock()
+	defer c.Unlock()
 
-			partMap[topic] = append(dst, p...)
+	c.delEventHandler(h)
+}
+
+func (c *Consumer) delEventHandler(h EventHandler) {
+	hp := reflect.ValueOf(h).Pointer()
+	for i, h2 := range c.eventHandlers {
+		hp2 := reflect.ValueOf(h2).Pointer()
+		if hp2 == hp {
+			c.eventHandlers = slices.Delete(c.eventHandlers, i, 1)
+			break
 		}
+	}
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+func GetAssignedPartitions(servers string) (parts AssignedPartitions) {
+	consumersMutex.RLock()
+	c, exists := consumers[servers]
+	consumersMutex.RUnlock()
+
+	if !exists {
+		return AssignedPartitions{}
+	}
+
+	return c.GetAssignedPartitions()
+}
+
+func (c *Consumer) GetAssignedPartitions() (parts AssignedPartitions) {
+	c.Lock()
+	defer c.Unlock()
+
+	parts = make(AssignedPartitions, len(c.partitions))
+	for topic, list := range c.partitions {
+		parts[topic] = slices.Clone(list)
 	}
 
 	return
