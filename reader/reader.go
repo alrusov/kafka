@@ -59,7 +59,7 @@ func Go(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topics 
 	return
 }
 
-func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topics ...string) (rds map[string]*Reader, err error) {
+func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topics ...string) (reader *Reader, err error) {
 	if len(topics) == 0 {
 		// All consumer toipics
 		topics = make([]string, 0, len(kafkaCfg.ConsumerTopics))
@@ -76,51 +76,25 @@ func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topic
 
 	kafkaCfg.Group = consumerGroupID
 
-	n := 1
-	if kafkaCfg.ConsumeInSeparateThreads {
-		n = len(topics)
-	}
-	rds = make(map[string]*Reader, n)
-
-	wg := new(sync.WaitGroup)
-
-	start := func(topics []string) (err error) {
-		conn, err := kafkaCfg.NewConsumer()
-		if err != nil {
-			return
-		}
-
-		wg.Add(1)
-
-		rd := &Reader{
-			id:       atomic.AddUint64(&lastReaderID, 1),
-			active:   true,
-			wg:       wg,
-			kafkaCfg: kafkaCfg,
-			conn:     conn,
-			topics:   topics,
-			handler:  handler,
-		}
-
-		rds[strings.Join(topics, ",")] = rd
-
-		go rd.do()
+	conn, err := kafkaCfg.NewConsumer()
+	if err != nil {
 		return
 	}
 
-	if kafkaCfg.ConsumeInSeparateThreads {
-		for _, topic := range topics {
-			err = start([]string{topic})
-			if err != nil {
-				return
-			}
-		}
-	} else {
-		err = start(topics)
-		if err != nil {
-			return
-		}
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+
+	reader = &Reader{
+		id:       atomic.AddUint64(&lastReaderID, 1),
+		active:   true,
+		wg:       wg,
+		kafkaCfg: kafkaCfg,
+		conn:     conn,
+		topics:   topics,
+		handler:  handler,
 	}
+
+	go reader.do()
 
 	misc.AddExitFunc(
 		"kafka.reader",
@@ -160,11 +134,7 @@ func (rd *Reader) do() {
 	panicID := panic.ID()
 	defer panic.SaveStackToLogEx(panicID)
 
-	msgSrc := rd.topics[0]
-	if len(rd.topics) > 1 {
-		msgSrc = msgSrc + " ..."
-	}
-	msgSrc = fmt.Sprintf("[%d] %s", rd.id, msgSrc)
+	msgSrc := fmt.Sprintf("%d: %s", rd.id, strings.Join(rd.topics, ", "))
 
 	Log.MessageWithSource(log.INFO, msgSrc, `Started`)
 
@@ -174,6 +144,9 @@ func (rd *Reader) do() {
 	}()
 
 	go func() {
+		panicID := panic.ID()
+		defer panic.SaveStackToLogEx(panicID)
+
 		misc.WaitingForStop()
 
 		rd.conn.Unsubscribe()
@@ -215,6 +188,14 @@ func (rd *Reader) do() {
 		rd.handler.Assigned(rd.conn, rd.topics)
 	}()
 
+	q := make(map[string]chan *kafka.Message, len(rd.topics))
+	for _, topic := range rd.topics {
+		topic := topic
+		tq := make(chan *kafka.Message, rd.kafkaCfg.ConsumerQueueLen)
+		q[topic] = tq
+		go rd.topicHandler(topic, tq)
+	}
+
 	for misc.AppStarted() && rd.active {
 		// reading with standard timeout
 		m, err := rd.conn.Read(0)
@@ -242,10 +223,44 @@ func (rd *Reader) do() {
 			continue
 		}
 
+		topic := *m.TopicPartition.Topic
+
+		ch, exists := q[topic]
+		if !exists {
+			Log.MessageWithSource(log.ERR, msgSrc, `unknown topic "%s"`, topic)
+			continue
+		}
+
+		ch <- m
+	}
+
+	for _, ch := range q {
+		close(ch)
+	}
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+func (rd *Reader) topicHandler(topic string, q chan *kafka.Message) {
+	panicID := panic.ID()
+	defer panic.SaveStackToLogEx(panicID)
+
+	Log.Message(log.INFO, `Handler for topic "%s" tarted`, topic)
+	defer Log.Message(log.INFO, `Handler for topic "%s" stopped`, topic)
+
+	for misc.AppStarted() {
 		id := atomic.AddUint64(&lastProcID, 1)
 
-		if Log.CurrentLogLevel() >= log.TRACE4 {
-			log.MessageWithSource(log.TRACE4, msgSrc, "[%d] Received %s.%d: %s = %s", id, *m.TopicPartition.Topic, m.TopicPartition.Partition, m.Key, m.Value)
+		m, more := <-q
+		if !more {
+			return
+		}
+
+		ll := Log.CurrentLogLevel()
+		if ll >= log.TRACE4 {
+			Log.Message(log.TRACE4, "[%s.%d] Received from %d: %s = %s", topic, id, m.TopicPartition.Partition, m.Key, m.Value)
+		} else if ll >= log.TRACE1 {
+			Log.Message(log.TRACE1, "[%s.%d] Received from %d: %s = ...", topic, id, m.TopicPartition.Partition, m.Key)
 		}
 
 		func() {
@@ -253,9 +268,9 @@ func (rd *Reader) do() {
 
 			defer func() {
 				if doCommit {
-					err = rd.conn.Commit(m)
+					err := rd.conn.Commit(m)
 					if err != nil {
-						Log.MessageWithSource(log.ERR, msgSrc, "[%d] Commit: %s", id, err)
+						Log.Message(log.ERR, "[%s.%d] Commit: %s", topic, id, err)
 					}
 				}
 			}()
@@ -263,7 +278,7 @@ func (rd *Reader) do() {
 			for misc.AppStarted() {
 				action, err := rd.handler.Processor(id, *m.TopicPartition.Topic, m)
 				if err != nil {
-					Log.MessageWithSource(log.ERR, msgSrc, "[%d] Processor: %s", id, err)
+					Log.Message(log.ERR, "[%s.%d] Processor: %s", topic, id, err)
 				}
 
 				switch action {
@@ -280,7 +295,7 @@ func (rd *Reader) do() {
 					return
 
 				default:
-					log.MessageWithSource(log.ERR, msgSrc, "[%d] SetResult returns unsupported Action=%d", id, action)
+					Log.Message(log.ERR, "[%s.%d] SetResult returns unsupported Action=%d", topic, id, action)
 					doCommit = true
 					return
 				}

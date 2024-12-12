@@ -40,13 +40,13 @@ type (
 
 		RetryTimeout config.Duration `toml:"retry-timeout"` // Таймаут повторной отправки
 
-		MaxRequestSize int `toml:"max-request-size"` // Максимальный размер сообщения
+		MaxRequestSize   int    `toml:"max-request-size"`   // Максимальный размер сообщения
+		ConsumerQueueLen int    `toml:"consumer-queue-len"` // Длина внутренней очереди для консьюмера
+		AutoCommit       bool   `toml:"auto-commit"`        // Использовать auto commit для консьюмера?
+		Group            string `toml:"group"`              // Группа для консьюмера
 
-		Group                    string                          `toml:"group"`                       // Группа для консьюмера
-		AutoCommit               bool                            `toml:"auto-commit"`                 // Использовать auto commit для консьюмера?
-		ConsumeInSeparateThreads bool                            `toml:"consume-in-separate-threads"` // Обрабатывать каждый топик в отдельном потоке
-		ProducerTopics           map[string]*ProducerTopicConfig `toml:"producer-topics"`             // Список топиков продюсера с их параметрами map[virtualName]*config
-		ConsumerTopics           map[string]*ConsumerTopicConfig `toml:"consumer-topics"`             // Список топиков консьюмера с их параметрами map[virtualName]*config
+		ProducerTopics map[string]*ProducerTopicConfig `toml:"producer-topics"` // Список топиков продюсера с их параметрами map[virtualName]*config
+		ConsumerTopics map[string]*ConsumerTopicConfig `toml:"consumer-topics"` // Список топиков консьюмера с их параметрами map[virtualName]*config
 	}
 
 	// Параметры топика продюсера
