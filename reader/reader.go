@@ -245,7 +245,7 @@ func (rd *Reader) topicHandler(topic string, q chan *kafka.Message) {
 	panicID := panic.ID()
 	defer panic.SaveStackToLogEx(panicID)
 
-	Log.Message(log.INFO, `Handler for topic "%s" tarted`, topic)
+	Log.Message(log.INFO, `Handler for topic "%s" started`, topic)
 	defer Log.Message(log.INFO, `Handler for topic "%s" stopped`, topic)
 
 	for misc.AppStarted() {
