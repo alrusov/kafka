@@ -111,7 +111,7 @@ func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topic
 			select {
 			case <-ch:
 				Log.Message(log.INFO, "All connections are closed")
-			case <-time.After(time.Duration(kafkaCfg.Timeout)):
+			case <-time.After(time.Duration(kafkaCfg.RetryTimeout)):
 				Log.Message(log.INFO, "Connection close timeout")
 			}
 		},
@@ -163,7 +163,7 @@ func (rd *Reader) do() {
 	subscribe := func() {
 		if !firstTime {
 			rd.conn.Unsubscribe()
-			misc.Sleep(time.Duration(rd.kafkaCfg.Timeout))
+			misc.Sleep(time.Duration(rd.kafkaCfg.RetryTimeout))
 		}
 		firstTime = false
 

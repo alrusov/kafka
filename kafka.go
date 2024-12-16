@@ -181,7 +181,7 @@ func (c *Config) Check(cfg any) (err error) {
 	}
 
 	if c.RetryTimeout <= 0 {
-		c.RetryTimeout = c.Timeout
+		c.RetryTimeout = config.ClientDefaultTimeout
 	}
 
 	if c.MaxRequestSize <= 0 {
