@@ -585,7 +585,7 @@ func (c *Consumer) subscribeTopics(topics []string) (err error) {
 
 	c.conn.SubscribeTopics(topics,
 		func(kc *kafka.Consumer, e kafka.Event) (err error) {
-			Log.Message(log.DEBUG, `Event "%T" reached (%s)`, e, e.String())
+			Log.Message(log.INFO, `Event "%T" reached (%s)`, e, e.String())
 
 			switch e := e.(type) {
 			case kafka.TopicPartition:

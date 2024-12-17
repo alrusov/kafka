@@ -258,9 +258,9 @@ func (rd *Reader) topicHandler(topic string, q chan *kafka.Message) {
 
 		ll := Log.CurrentLogLevel()
 		if ll >= log.TRACE4 {
-			Log.Message(log.TRACE4, "[%s.%d] Received from %d: %s = %s", topic, id, m.TopicPartition.Partition, m.Key, m.Value)
+			Log.Message(log.TRACE4, "[%s.%d] Received from %d: %s = (%d bytes) %s", topic, id, m.TopicPartition.Partition, m.Key, len(m.Value), m.Value)
 		} else if ll >= log.TRACE1 {
-			Log.Message(log.TRACE1, "[%s.%d] Received from %d: %s = ...", topic, id, m.TopicPartition.Partition, m.Key)
+			Log.Message(log.TRACE1, "[%s.%d] Received from %d: %s = (%d bytes)", topic, id, m.TopicPartition.Partition, m.Key, len(m.Value))
 		}
 
 		func() {
