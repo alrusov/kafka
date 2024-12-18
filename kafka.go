@@ -11,6 +11,7 @@ package kafka
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"sort"
@@ -44,6 +45,7 @@ type (
 		ConsumerQueueLen int    `toml:"consumer-queue-len"` // Длина внутренней очереди для консьюмера
 		AutoCommit       bool   `toml:"auto-commit"`        // Использовать auto commit для консьюмера?
 		Group            string `toml:"group"`              // Группа для консьюмера
+		Acks             string `toml:"acks"`               // Producer acks
 
 		ProducerTopics map[string]*ProducerTopicConfig `toml:"producer-topics"` // Список топиков продюсера с их параметрами map[virtualName]*config
 		ConsumerTopics map[string]*ConsumerTopicConfig `toml:"consumer-topics"` // Список топиков консьюмера с их параметрами map[virtualName]*config
@@ -188,6 +190,11 @@ func (c *Config) Check(cfg any) (err error) {
 		c.MaxRequestSize = 1048576
 	}
 
+	c.Acks, err = checkAcks(c.Acks, "1")
+	if err != nil {
+		msgs.Add("kafka.acks: %s", err)
+	}
+
 	for key, topic := range c.ProducerTopics {
 		if !topic.Active {
 			delete(c.ProducerTopics, key)
@@ -253,6 +260,23 @@ func (c *ConsumerTopicConfig) Check(cfg any) (err error) {
 
 //----------------------------------------------------------------------------------------------------------------------------//
 
+func checkAcks(src string, defVal string) (acks string, err error) {
+	acks = src
+
+	switch acks {
+	case "all", "-1", "0", "1":
+		return
+	case "":
+		acks = defVal
+		return
+	default:
+		err = fmt.Errorf(`illegal value "%s"`, acks)
+		return
+	}
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
 // Создать набор параметров для соединения
 func (c *Config) makeConfigMap(isConsumer bool, extra misc.InterfaceMap) (config *kafka.ConfigMap) {
 	config = &kafka.ConfigMap{
@@ -268,6 +292,7 @@ func (c *Config) makeConfigMap(isConsumer bool, extra misc.InterfaceMap) (config
 		(*config)["max.partition.fetch.bytes"] = c.MaxRequestSize
 		(*config)["fetch.max.bytes"] = c.MaxRequestSize
 	} else {
+		(*config)["acks"] = c.Acks
 		(*config)["message.max.bytes"] = c.MaxRequestSize
 		(*config)["compression.codec"] = "gzip"
 	}
