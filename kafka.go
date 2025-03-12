@@ -46,6 +46,7 @@ type (
 		AutoCommit       bool   `toml:"auto-commit"`        // Использовать auto commit для консьюмера?
 		Group            string `toml:"group"`              // Группа для консьюмера
 		Acks             string `toml:"acks"`               // Producer acks
+		Compression      string `toml:"compression"`        // Producer compression type
 
 		ProducerTopics map[string]*ProducerTopicConfig `toml:"producer-topics"` // Список топиков продюсера с их параметрами map[virtualName]*config
 		ConsumerTopics map[string]*ConsumerTopicConfig `toml:"consumer-topics"` // Список топиков консьюмера с их параметрами map[virtualName]*config
@@ -195,6 +196,10 @@ func (c *Config) Check(cfg any) (err error) {
 		msgs.Add("kafka.acks: %s", err)
 	}
 
+	if c.Compression == "" {
+		c.Compression = "none"
+	}
+
 	for key, topic := range c.ProducerTopics {
 		if !topic.Active {
 			delete(c.ProducerTopics, key)
@@ -294,7 +299,7 @@ func (c *Config) makeConfigMap(isConsumer bool, extra misc.InterfaceMap) (config
 	} else {
 		(*config)["acks"] = c.Acks
 		(*config)["message.max.bytes"] = c.MaxRequestSize
-		(*config)["compression.codec"] = "gzip"
+		(*config)["compression.type"] = c.Compression
 	}
 
 	for n, v := range extra {
@@ -474,6 +479,16 @@ func (c *Producer) SaveMessages(m Messages) (err error) {
 		return nil
 	}
 
+	ln := 0
+
+	if Log.CurrentLogLevel() >= log.TIME {
+		t0 := misc.NowUTC()
+
+		defer func() {
+			misc.LogProcessingTime(Log.Name(), "", 0, "", fmt.Sprintf(`%d messages/%d bytes saved`, len(m), ln), t0.UnixNano())
+		}()
+	}
+
 	msgs := misc.NewMessages()
 
 	ex := make(chan struct{})
@@ -502,6 +517,7 @@ func (c *Producer) SaveMessages(m Messages) (err error) {
 	}()
 
 	for _, msg := range m {
+		ln += len(msg.Value)
 		msg := msg
 		err := c.conn.Produce((*kafka.Message)(&msg), nil)
 		if err != nil {
