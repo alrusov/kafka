@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"sort"
@@ -54,10 +55,10 @@ type (
 
 	// Параметры топика продюсера
 	ProducerTopicConfig struct {
-		Active   bool   `toml:"active"`   // Активный?
-		Type     string `toml:"type"`     // Тип топика. Произвольное необязательное значение на усмотрение разработчика
-		Encoding string `toml:"encoding"` // Формат данных
-
+		Active            bool            `toml:"active"`             // Активный?
+		Type              string          `toml:"type"`               // Тип топика. Произвольное необязательное значение на усмотрение разработчика
+		Encoding          string          `toml:"encoding"`           // Формат данных
+		UsePartitions     []uint          `toml:"use-partitions"`     // Используемые партиции. Если пусто, то все. Если не пусто, то [сейчас] используется первая из списка
 		NumPartitions     int             `toml:"num-partitions"`     // Количество партиций при создании
 		ReplicationFactor int             `toml:"replication-factor"` // Фактор репликации при создании
 		RetentionTime     config.Duration `toml:"retention-time"`     // Время жизни данных
@@ -68,13 +69,11 @@ type (
 
 	// Параметры топика консьюмера
 	ConsumerTopicConfig struct {
-		Active   bool   `toml:"active"`   // Активный?
-		Type     string `toml:"type"`     // Тип топика. Произвольное необязательное значение на усмотрение разработчика
-		Encoding string `toml:"encoding"` // Формат данных
-
-		//Partitions []uint `toml:"partitions"` // Партиции для чтения. Если пусто, то все
-
-		Extra any `toml:"extra"` // Произвольные дополнительные данные
+		Active        bool   `toml:"active"`         // Активный?
+		Type          string `toml:"type"`           // Тип топика. Произвольное необязательное значение на усмотрение разработчика
+		Encoding      string `toml:"encoding"`       // Формат данных
+		UsePartitions []uint `toml:"use-partitions"` // Используемые партиции. Если пусто, то все
+		Extra         any    `toml:"extra"`          // Произвольные дополнительные данные
 	}
 
 	// Админский клиент
@@ -111,22 +110,22 @@ type (
 	AssignedPartitionsList []int
 
 	// Метаданные
-	Metadata kafka.Metadata
+	Metadata = kafka.Metadata
 
 	// Сообщение
-	Message kafka.Message
+	Message = kafka.Message
 
 	// Набор сообщений
 	Messages []Message
 
 	// Смещение
-	Offset kafka.Offset
+	Offset = kafka.Offset
 
 	// Ошибка
 	Error kafka.Error
 
-	TopicPartition  kafka.TopicPartition
-	TopicPartitions kafka.TopicPartitions
+	TopicPartition  = kafka.TopicPartition
+	TopicPartitions = kafka.TopicPartitions
 
 	EventHandler func(c *Consumer, assigned bool, partitions TopicPartitions)
 )
@@ -601,30 +600,40 @@ func (c *Consumer) Close() {
 // Подписаться на топики по списку
 
 func (c *Consumer) Subscribe(topics []string) (err error) {
+	tp := make(TopicPartitions, len(topics))
+	for i, topic := range topics {
+		topic := topic
+		tp[i] = kafka.TopicPartition{Topic: &topic, Partition: PartitionAny}
+	}
+
+	return c.SubscribeEx(tp)
+}
+
+func (c *Consumer) SubscribeEx(tp TopicPartitions) (err error) {
+	return c.subscribeTopics(tp)
+}
+
+func (c *Consumer) subscribeTopics(tp TopicPartitions) (err error) {
 	if misc.TEST {
 		c.initialAssigned = true
 		return nil
 	}
 
-	list := make([]kafka.TopicPartition, len(topics))
-
-	for i, topic := range topics {
-		topic := topic
-		list[i] = kafka.TopicPartition{
-			Topic: &topic,
-		}
-	}
-
-	return c.subscribeTopics(topics)
-}
-
-func (c *Consumer) subscribeTopics(topics []string) (err error) {
-	if len(topics) == 0 {
-		c.assignPartitions(true, nil)
+	if len(tp) == 0 {
+		c.assignedPartitions(true, nil)
 		return
 	}
 
-	c.conn.SubscribeTopics(topics,
+	assignNeeded := false
+	topics := make(map[string]bool, len(tp))
+	for _, t := range tp {
+		topics[*t.Topic] = true
+		if t.Partition != PartitionAny {
+			assignNeeded = true
+		}
+	}
+
+	err = c.conn.SubscribeTopics(slices.Collect(maps.Keys(topics)),
 		func(kc *kafka.Consumer, e kafka.Event) (err error) {
 			Log.Message(log.INFO, `Event "%T" reached (%s)`, e, e.String())
 
@@ -632,21 +641,31 @@ func (c *Consumer) subscribeTopics(topics []string) (err error) {
 			case kafka.TopicPartition:
 
 			case kafka.AssignedPartitions:
-				c.assignPartitions(true, e.Partitions)
+				c.assignedPartitions(true, e.Partitions)
 
 			case kafka.RevokedPartitions:
-				c.assignPartitions(false, e.Partitions)
+				c.assignedPartitions(false, e.Partitions)
 			}
 			return
 		},
 	)
+	if err != nil {
+		return
+	}
+
+	if assignNeeded {
+		err = c.conn.Assign(tp)
+		if err != nil {
+			return
+		}
+	}
 
 	return
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
 
-func (c *Consumer) assignPartitions(assigned bool, partitions TopicPartitions) {
+func (c *Consumer) assignedPartitions(assigned bool, partitions TopicPartitions) {
 	c.Lock()
 
 	defer func() {

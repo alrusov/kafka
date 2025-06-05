@@ -5,6 +5,8 @@ package reader
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,7 +34,7 @@ type (
 		wg       *sync.WaitGroup
 		kafkaCfg *kafka.Config
 		conn     *kafka.Consumer
-		topics   []string
+		topics   kafka.TopicPartitions
 		handler  Handler
 	}
 )
@@ -54,22 +56,30 @@ var (
 
 // Start
 
-func Go(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topics ...string) (err error) {
-	_, err = GoEx(kafkaCfg, consumerGroupID, handler, topics...)
+func Go(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topics []string) (err error) {
+	tp := make(kafka.TopicPartitions, len(topics))
+	for i, topic := range topics {
+		topic := topic
+		tp[i] = kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny}
+	}
+
+	_, err = GoEx(kafkaCfg, consumerGroupID, handler, tp)
 	return
 }
 
-func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topics ...string) (reader *Reader, err error) {
-	if len(topics) == 0 {
+func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, tp kafka.TopicPartitions) (reader *Reader, err error) {
+	if len(tp) == 0 {
 		// All consumer toipics
-		topics = make([]string, 0, len(kafkaCfg.ConsumerTopics))
+		tp = make(kafka.TopicPartitions, 0, len(kafkaCfg.ConsumerTopics))
 
 		for topic := range kafkaCfg.ConsumerTopics {
-			topics = append(topics, topic)
+			topic := topic
+			p := kafka.PartitionAny
+			tp = append(tp, kafka.TopicPartition{Topic: &topic, Partition: p})
 		}
 	}
 
-	if len(topics) == 0 {
+	if len(tp) == 0 {
 		err = fmt.Errorf("no consumer topics")
 		return
 	}
@@ -90,7 +100,7 @@ func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topic
 		wg:       wg,
 		kafkaCfg: kafkaCfg,
 		conn:     conn,
-		topics:   topics,
+		topics:   tp,
 		handler:  handler,
 	}
 
@@ -134,7 +144,13 @@ func (rd *Reader) do() {
 	panicID := panic.ID()
 	defer panic.SaveStackToLogEx(panicID)
 
-	msgSrc := fmt.Sprintf("%d: %s", rd.id, strings.Join(rd.topics, ", "))
+	namesMap := make(map[string]bool, len(rd.topics))
+	for _, t := range rd.topics {
+		namesMap[*t.Topic] = true
+	}
+	names := slices.Collect(maps.Keys(namesMap))
+
+	msgSrc := fmt.Sprintf("%d: %s", rd.id, strings.Join(names, ", "))
 
 	Log.MessageWithSource(log.INFO, msgSrc, `Started`)
 
@@ -169,7 +185,7 @@ func (rd *Reader) do() {
 
 		Log.MessageWithSource(log.INFO, msgSrc, "Try to subscribe to %v", rd.topics)
 
-		err := rd.conn.Subscribe(rd.topics)
+		err := rd.conn.SubscribeEx(rd.topics)
 		if err != nil {
 			Log.MessageWithSource(log.ERR, msgSrc, "Subscribe: %s", err)
 			return
@@ -185,11 +201,11 @@ func (rd *Reader) do() {
 		defer panic.SaveStackToLogEx(panicID)
 
 		rd.conn.WaitingForAssign()
-		rd.handler.Assigned(rd.conn, rd.topics)
+		rd.handler.Assigned(rd.conn, names)
 	}()
 
-	q := make(map[string]chan *kafka.Message, len(rd.topics))
-	for _, topic := range rd.topics {
+	q := make(map[string]chan *kafka.Message, len(names))
+	for _, topic := range names {
 		topic := topic
 		tq := make(chan *kafka.Message, rd.kafkaCfg.ConsumerQueueLen)
 		q[topic] = tq
