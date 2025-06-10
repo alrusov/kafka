@@ -73,6 +73,7 @@ type (
 		Type          string `toml:"type"`           // Тип топика. Произвольное необязательное значение на усмотрение разработчика
 		Encoding      string `toml:"encoding"`       // Формат данных
 		UsePartitions []uint `toml:"use-partitions"` // Используемые партиции. Если пусто, то все
+		Offset        Offset `toml:"offset"`         // Начальное смещение. Если 0, то не используем
 		Extra         any    `toml:"extra"`          // Произвольные дополнительные данные
 	}
 
@@ -633,28 +634,29 @@ func (c *Consumer) subscribeTopics(tp TopicPartitions) (err error) {
 		}
 	}
 
-	err = c.conn.SubscribeTopics(slices.Collect(maps.Keys(topics)),
-		func(kc *kafka.Consumer, e kafka.Event) (err error) {
-			Log.Message(log.INFO, `Event "%T" reached (%s)`, e, e.String())
-
-			switch e := e.(type) {
-			case kafka.TopicPartition:
-
-			case kafka.AssignedPartitions:
-				c.assignedPartitions(true, e.Partitions)
-
-			case kafka.RevokedPartitions:
-				c.assignedPartitions(false, e.Partitions)
-			}
-			return
-		},
-	)
-	if err != nil {
-		return
-	}
-
 	if assignNeeded {
 		err = c.conn.Assign(tp)
+		if err != nil {
+			return
+		}
+		c.assignedPartitions(true, tp)
+	} else {
+		err = c.conn.SubscribeTopics(slices.Collect(maps.Keys(topics)),
+			func(kc *kafka.Consumer, e kafka.Event) (err error) {
+				Log.Message(log.INFO, `Event "%T" reached (%s)`, e, e.String())
+
+				switch e := e.(type) {
+				case kafka.TopicPartition:
+
+				case kafka.AssignedPartitions:
+					c.assignedPartitions(true, e.Partitions)
+
+				case kafka.RevokedPartitions:
+					c.assignedPartitions(false, e.Partitions)
+				}
+				return
+			},
+		)
 		if err != nil {
 			return
 		}
