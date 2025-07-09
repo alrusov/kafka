@@ -51,6 +51,10 @@ type (
 
 		ProducerTopics map[string]*ProducerTopicConfig `toml:"producer-topics"` // Список топиков продюсера с их параметрами map[virtualName]*config
 		ConsumerTopics map[string]*ConsumerTopicConfig `toml:"consumer-topics"` // Список топиков консьюмера с их параметрами map[virtualName]*config
+
+		// consumers
+		consumersMutex sync.RWMutex
+		consumers      []*Consumer
 	}
 
 	// Параметры топика продюсера
@@ -150,9 +154,6 @@ var (
 
 	// Ошибка - конец данных
 	ErrPartitionEOF = errors.New("partition EOF")
-
-	consumersMutex sync.RWMutex
-	consumers      = make(map[string]*Consumer, 128) // [servers]
 )
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -577,9 +578,12 @@ func (c *Config) NewConsumerEx(extra misc.InterfaceMap) (client *Consumer, err e
 		initialCond:     sync.NewCond(new(sync.Mutex)),
 	}
 
-	consumersMutex.Lock()
-	consumers[c.Servers] = client
-	consumersMutex.Unlock()
+	c.consumersMutex.Lock()
+	if c.consumers == nil {
+		c.consumers = make([]*Consumer, 0, 16)
+	}
+	c.consumers = append(c.consumers, client)
+	c.consumersMutex.Unlock()
 
 	return
 }
@@ -896,16 +900,21 @@ func (c *Consumer) delEventHandler(h EventHandler) {
 
 //----------------------------------------------------------------------------------------------------------------------------//
 
-func GetAssignedPartitions(servers string) (parts AssignedPartitions) {
-	consumersMutex.RLock()
-	c, exists := consumers[servers]
-	consumersMutex.RUnlock()
+func (c *Config) GetAssignedPartitions() (parts []AssignedPartitions) {
+	c.consumersMutex.RLock()
+	defer c.consumersMutex.RUnlock()
 
-	if !exists {
-		return AssignedPartitions{}
+	if len(c.consumers) == 0 {
+		return
 	}
 
-	return c.GetAssignedPartitions()
+	parts = make([]AssignedPartitions, 0, len(c.consumers))
+
+	for _, cons := range c.consumers {
+		parts = append(parts, cons.GetAssignedPartitions())
+	}
+
+	return
 }
 
 func (c *Consumer) GetAssignedPartitions() (parts AssignedPartitions) {

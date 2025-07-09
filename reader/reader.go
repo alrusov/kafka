@@ -5,8 +5,6 @@ package reader
 
 import (
 	"fmt"
-	"maps"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,7 +32,7 @@ type (
 		wg       *sync.WaitGroup
 		kafkaCfg *kafka.Config
 		conn     *kafka.Consumer
-		topics   kafka.TopicPartitions
+		topic    kafka.TopicPartition
 		handler  Handler
 	}
 )
@@ -84,49 +82,53 @@ func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, tp ka
 		return
 	}
 
-	kafkaCfg.Group = consumerGroupID
+	for _, t := range tp {
+		kafkaCfg.Group = consumerGroupID
 
-	conn, err := kafkaCfg.NewConsumer()
-	if err != nil {
-		return
+		conn, e := kafkaCfg.NewConsumer()
+		if e != nil {
+			err = e
+			return
+		}
+
+		wg := new(sync.WaitGroup)
+		wg.Add(1)
+
+		reader = &Reader{
+			id:       atomic.AddUint64(&lastReaderID, 1),
+			active:   true,
+			wg:       wg,
+			kafkaCfg: kafkaCfg,
+			conn:     conn,
+			topic:    t,
+			handler:  handler,
+		}
+
+		go reader.do()
+
+		name := *t.Topic
+		misc.AddExitFunc(
+			"kafka.reader."+name,
+			func(_ int, name any) {
+				ch := make(chan struct{})
+				go func() {
+					panicID := panic.ID()
+					defer panic.SaveStackToLogEx(panicID)
+
+					wg.Wait()
+					close(ch)
+				}()
+
+				select {
+				case <-ch:
+					Log.Message(log.INFO, "[%s] Connection closed", name)
+				case <-time.After(time.Duration(kafkaCfg.RetryTimeout)):
+					Log.Message(log.INFO, "[%s] Connection close timeout", name)
+				}
+			},
+			name,
+		)
 	}
-
-	wg := new(sync.WaitGroup)
-	wg.Add(1)
-
-	reader = &Reader{
-		id:       atomic.AddUint64(&lastReaderID, 1),
-		active:   true,
-		wg:       wg,
-		kafkaCfg: kafkaCfg,
-		conn:     conn,
-		topics:   tp,
-		handler:  handler,
-	}
-
-	go reader.do()
-
-	misc.AddExitFunc(
-		"kafka.reader",
-		func(_ int, _ any) {
-			ch := make(chan struct{})
-			go func() {
-				panicID := panic.ID()
-				defer panic.SaveStackToLogEx(panicID)
-
-				wg.Wait()
-				close(ch)
-			}()
-
-			select {
-			case <-ch:
-				Log.Message(log.INFO, "All connections are closed")
-			case <-time.After(time.Duration(kafkaCfg.RetryTimeout)):
-				Log.Message(log.INFO, "Connection close timeout")
-			}
-		},
-		nil,
-	)
 
 	return
 }
@@ -144,11 +146,9 @@ func (rd *Reader) do() {
 	panicID := panic.ID()
 	defer panic.SaveStackToLogEx(panicID)
 
-	namesMap := make(map[string]bool, len(rd.topics))
-	for _, t := range rd.topics {
-		namesMap[*t.Topic] = true
-	}
-	names := slices.Collect(maps.Keys(namesMap))
+	// Сейчас только один топик на читателя, но на всякий случай оставим возможность иметь несколько
+	name := *rd.topic.Topic
+	names := []string{name}
 
 	msgSrc := fmt.Sprintf("%d: %s", rd.id, strings.Join(names, ", "))
 
@@ -183,9 +183,9 @@ func (rd *Reader) do() {
 		}
 		firstTime = false
 
-		Log.MessageWithSource(log.INFO, msgSrc, "Try to subscribe to %v", rd.topics)
+		Log.MessageWithSource(log.INFO, msgSrc, `Try to subscribe to "%s"`, rd.topic)
 
-		err := rd.conn.SubscribeEx(rd.topics)
+		err := rd.conn.SubscribeEx(kafka.TopicPartitions{rd.topic})
 		if err != nil {
 			Log.MessageWithSource(log.ERR, msgSrc, "Subscribe: %s", err)
 			return
