@@ -175,6 +175,7 @@ func (e Error) Error() string {
 // Проверка валидности Config
 func (c *Config) Check(cfg any) (err error) {
 	msgs := misc.NewMessages()
+	defer msgs.Free()
 
 	if c.Servers == "" {
 		msgs.Add(`Undefined kafka.servers`)
@@ -235,6 +236,7 @@ func (c *Config) Check(cfg any) (err error) {
 // Проверка валидности ProducerTopicConfig
 func (c *ProducerTopicConfig) Check(cfg any) (err error) {
 	msgs := misc.NewMessages()
+	defer msgs.Free()
 
 	if c.NumPartitions <= 0 {
 		c.NumPartitions = 1
@@ -260,6 +262,7 @@ func (c *ProducerTopicConfig) Check(cfg any) (err error) {
 // Проверка валидности ProducerTopicConfig
 func (c *ConsumerTopicConfig) Check(cfg any) (err error) {
 	msgs := misc.NewMessages()
+	defer msgs.Free()
 
 	return msgs.Error()
 }
@@ -491,6 +494,7 @@ func (c *Producer) SaveMessages(m Messages) (err error) {
 	}
 
 	msgs := misc.NewMessages()
+	defer msgs.Free()
 
 	ex := make(chan struct{})
 	defer close(ex)
