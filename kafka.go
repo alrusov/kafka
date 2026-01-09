@@ -193,6 +193,10 @@ func (c *Config) Check(cfg any) (err error) {
 		c.MaxRequestSize = 1048576
 	}
 
+	if c.ConsumerQueueLen <= 0 {
+		c.ConsumerQueueLen = 16
+	}
+
 	c.Acks, err = checkAcks(c.Acks, "1")
 	if err != nil {
 		msgs.Add("kafka.acks: %s", err)
@@ -200,6 +204,13 @@ func (c *Config) Check(cfg any) (err error) {
 
 	if c.Compression == "" {
 		c.Compression = "none"
+	}
+	validCompression := map[string]bool{
+		"none": true, "gzip": true, "snappy": true,
+		"lz4": true, "zstd": true,
+	}
+	if !validCompression[c.Compression] {
+		return fmt.Errorf("invalid compression type: %s", c.Compression)
 	}
 
 	for key, topic := range c.ProducerTopics {

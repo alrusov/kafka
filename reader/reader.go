@@ -4,6 +4,7 @@ kafka reader
 package reader
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -27,8 +28,12 @@ type (
 	Action int
 
 	Reader struct {
+		sync.Mutex
+		ctx      context.Context
+		cancel   context.CancelFunc
 		id       uint64
-		active   bool
+		msgSrc   string
+		active   atomic.Bool
 		wg       *sync.WaitGroup
 		kafkaCfg *kafka.Config
 		conn     *kafka.Consumer
@@ -65,7 +70,7 @@ func Go(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, topics 
 	return
 }
 
-func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, tp kafka.TopicPartitions) (reader *Reader, err error) {
+func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, tp kafka.TopicPartitions) (readers []*Reader, err error) {
 	if len(tp) == 0 {
 		// All consumer toipics
 		tp = make(kafka.TopicPartitions, 0, len(kafkaCfg.ConsumerTopics))
@@ -82,6 +87,17 @@ func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, tp ka
 		return
 	}
 
+	defer func() {
+		if err != nil {
+			// Закрыть все уже созданные readers
+			for _, rd := range readers {
+				rd.Stop()
+				rd.Close()
+			}
+			readers = nil
+		}
+	}()
+
 	for _, t := range tp {
 		kafkaCfg.Group = consumerGroupID
 
@@ -94,17 +110,20 @@ func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, tp ka
 		wg := new(sync.WaitGroup)
 		wg.Add(1)
 
-		reader = &Reader{
+		rd := &Reader{
 			id:       atomic.AddUint64(&lastReaderID, 1),
-			active:   true,
+			active:   atomic.Bool{},
 			wg:       wg,
 			kafkaCfg: kafkaCfg,
 			conn:     conn,
 			topic:    t,
 			handler:  handler,
 		}
+		rd.active.Store(true)
 
-		go reader.do()
+		readers = append(readers, rd)
+
+		go rd.do()
 
 		name := *t.Topic
 		misc.AddExitFunc(
@@ -136,7 +155,24 @@ func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, tp ka
 //----------------------------------------------------------------------------------------------------------------------------//
 
 func (rd *Reader) Stop() {
-	rd.active = false
+	rd.active.Store(false)
+}
+
+func (rd *Reader) Close() {
+	rd.Lock()
+	defer rd.Unlock()
+
+	if rd.conn == nil {
+		return
+	}
+
+	rd.conn.Unsubscribe()
+	Log.MessageWithSource(log.DEBUG, rd.msgSrc, `Unsubscribed`)
+
+	rd.conn.Close()
+	Log.MessageWithSource(log.DEBUG, rd.msgSrc, `Closed`)
+
+	rd.conn = nil
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -150,12 +186,14 @@ func (rd *Reader) do() {
 	name := *rd.topic.Topic
 	names := []string{name}
 
-	msgSrc := fmt.Sprintf("%d: %s", rd.id, strings.Join(names, ", "))
+	rd.msgSrc = fmt.Sprintf("%d: %s", rd.id, strings.Join(names, ", "))
+	rd.ctx, rd.cancel = context.WithCancel(context.Background())
+	defer rd.cancel()
 
-	Log.MessageWithSource(log.INFO, msgSrc, `Started`)
+	Log.MessageWithSource(log.INFO, rd.msgSrc, `Started`)
 
 	defer func() {
-		Log.MessageWithSource(log.INFO, msgSrc, `Stopped`)
+		Log.MessageWithSource(log.INFO, rd.msgSrc, `Stopped`)
 		rd.wg.Done()
 	}()
 
@@ -163,38 +201,14 @@ func (rd *Reader) do() {
 		panicID := panic.ID()
 		defer panic.SaveStackToLogEx(panicID)
 
+		// Ждем завершение приложения
 		misc.WaitingForStop()
 
-		rd.conn.Unsubscribe()
-		Log.MessageWithSource(log.DEBUG, msgSrc, `Unsubscribed`)
-
 		// if will be enough time
-		rd.conn.Close()
-		Log.MessageWithSource(log.DEBUG, msgSrc, `Connection closed`)
+		rd.Close()
+		Log.MessageWithSource(log.DEBUG, rd.msgSrc, `Connection closed`)
 
 	}()
-
-	firstTime := true
-
-	subscribe := func() {
-		if !firstTime {
-			rd.conn.Unsubscribe()
-			misc.Sleep(time.Duration(rd.kafkaCfg.RetryTimeout))
-		}
-		firstTime = false
-
-		Log.MessageWithSource(log.INFO, msgSrc, `Try to subscribe to "%s"`, rd.topic)
-
-		err := rd.conn.SubscribeEx(kafka.TopicPartitions{rd.topic})
-		if err != nil {
-			Log.MessageWithSource(log.ERR, msgSrc, "Subscribe: %s", err)
-			return
-		}
-
-		Log.MessageWithSource(log.INFO, msgSrc, "Subscribe initiated")
-	}
-
-	subscribe()
 
 	go func() {
 		panicID := panic.ID()
@@ -204,6 +218,19 @@ func (rd *Reader) do() {
 		rd.handler.Assigned(rd.conn, names)
 	}()
 
+	firstTime := true
+	for {
+		if !misc.AppStarted() {
+			return
+		}
+
+		if err := rd.subscribe(firstTime); err == nil {
+			break
+		}
+		firstTime = false
+
+	}
+
 	q := make(map[string]chan *kafka.Message, len(names))
 	for _, topic := range names {
 		topic := topic
@@ -212,7 +239,13 @@ func (rd *Reader) do() {
 		go rd.topicHandler(topic, tq)
 	}
 
-	for misc.AppStarted() && rd.active {
+	defer func() {
+		for _, ch := range q {
+			close(ch)
+		}
+	}()
+
+	for misc.AppStarted() && rd.active.Load() {
 		// reading with standard timeout
 		m, err := rd.conn.Read(0)
 
@@ -228,8 +261,10 @@ func (rd *Reader) do() {
 				// configuration property to true.
 				fallthrough
 			default:
-				Log.MessageWithSource(log.ERR, msgSrc, "read: %s", err)
-				subscribe()
+				Log.MessageWithSource(log.ERR, rd.msgSrc, "read: %s", err)
+				if err = rd.subscribe(false); err != nil {
+					Log.MessageWithSource(log.ERR, rd.msgSrc, "subscribe: %s", err)
+				}
 			}
 			continue
 		}
@@ -243,16 +278,39 @@ func (rd *Reader) do() {
 
 		ch, exists := q[topic]
 		if !exists {
-			Log.MessageWithSource(log.ERR, msgSrc, `unknown topic "%s"`, topic)
+			Log.MessageWithSource(log.ERR, rd.msgSrc, `unknown topic "%s"`, topic)
 			continue
 		}
 
-		ch <- m
+		select {
+		case ch <- m:
+		case <-rd.ctx.Done():
+			return
+		}
+	}
+}
+
+//----------------------------------------------------------------------------------------------------------------------------//
+
+func (rd *Reader) subscribe(firstTime bool) (err error) {
+	if !firstTime {
+		rd.conn.Unsubscribe()
+		select {
+		case <-time.After(rd.kafkaCfg.RetryTimeout.D()):
+		case <-rd.ctx.Done():
+			return fmt.Errorf("cancelled")
+		}
 	}
 
-	for _, ch := range q {
-		close(ch)
+	Log.MessageWithSource(log.INFO, rd.msgSrc, `Try to subscribe to "%s"`, rd.topic)
+
+	err = rd.conn.SubscribeEx(kafka.TopicPartitions{rd.topic})
+	if err != nil {
+		return
 	}
+
+	Log.MessageWithSource(log.INFO, rd.msgSrc, "Subscription initiated")
+	return
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -263,6 +321,8 @@ func (rd *Reader) topicHandler(topic string, q chan *kafka.Message) {
 
 	Log.Message(log.INFO, `Handler for topic "%s" started`, topic)
 	defer Log.Message(log.INFO, `Handler for topic "%s" stopped`, topic)
+
+	retryTimeout := rd.kafkaCfg.RetryTimeout.D()
 
 	for misc.AppStarted() {
 		id := atomic.AddUint64(&lastProcID, 1)
@@ -299,7 +359,7 @@ func (rd *Reader) topicHandler(topic string, q chan *kafka.Message) {
 
 				switch action {
 				case ActionRetry:
-					misc.Sleep(time.Duration(rd.kafkaCfg.RetryTimeout))
+					misc.Sleep(retryTimeout)
 					continue
 
 				case ActionCommit:
