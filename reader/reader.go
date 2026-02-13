@@ -126,7 +126,7 @@ func GoEx(kafkaCfg *kafka.Config, consumerGroupID string, handler Handler, tp ka
 		go rd.do()
 
 		name := *t.Topic
-		misc.AddExitFunc(
+		misc.AddFinalizer(
 			"kafka.reader."+name,
 			func(_ int, name any) {
 				ch := make(chan struct{})

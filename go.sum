@@ -18,10 +18,10 @@ github.com/alrusov/config v0.1.67 h1:Px2ZEYT6/OkpmA2/ZiMEmUuW318V2t3QHyceV15fU+M
 github.com/alrusov/config v0.1.67/go.mod h1:w8KBw540K415qb96N9XKRbc9ClzV/K3fJigemeQrxtQ=
 github.com/alrusov/jsonw v0.1.3 h1:662GZ/2/Ym5hN4z0ut6EbvmdnXfaIK7vSRslmnFpGXw=
 github.com/alrusov/jsonw v0.1.3/go.mod h1:310ODYzX2wl26sdPfdnRZ9R4XW+5lYzZZVCcU/5K2Y4=
-github.com/alrusov/log v0.1.39 h1:2OLNZXUA0/IqZi90/Ka5dKLGNNTMvp8tBOK438+WaQQ=
-github.com/alrusov/log v0.1.39/go.mod h1:jbbezpAINf5RnacAbG4jkJCtG/HVzEX56tW+HudK6tk=
-github.com/alrusov/misc v1.1.28 h1:WOKI7kGUFXeD3NYiVUQefyeyy3rRXvJFWWwZg6oC5dY=
-github.com/alrusov/misc v1.1.28/go.mod h1:67mjE5belR2qSR4NyGBGk70oJQwkiRVnKbIrzXxpFRQ=
+github.com/alrusov/log v0.1.40 h1:hiQpMlziQNqMLLLHUleGDy6syjSq/9exd0v3oOv1xKw=
+github.com/alrusov/log v0.1.40/go.mod h1:eEO7A7mQtESeCwQL6lhoXJ+LNaySNmgdrC61Vi6PaXE=
+github.com/alrusov/misc v1.1.31 h1:9zoyYyw9fdt/CWve3bpWVt7CLl3Es3Ejhtt3trU9058=
+github.com/alrusov/misc v1.1.31/go.mod h1:gQ59Asg+stMSxoKBQSWmMukWy3dBe/YGavKo6KXVCNE=
 github.com/alrusov/panic v0.1.16 h1:zRwyDxavX3w/cnlX1aW3remDMAEEwMjs+BtjgxZND5A=
 github.com/alrusov/panic v0.1.16/go.mod h1:Un623hbV6QjGY3GNBoquVzP6lo3nEDJdDb3aanu44Ro=
 github.com/aws/aws-sdk-go-v2 v1.26.1 h1:5554eUqIYVWpU0YmeeYZ0wU64H2VLBs8TlhRB2L+EkA=
@@ -108,6 +108,8 @@ github.com/eiannone/keyboard v0.0.0-20220611211555-0d226195f203 h1:XBBHcIb256gUJ
 github.com/eiannone/keyboard v0.0.0-20220611211555-0d226195f203/go.mod h1:E1jcSv8FaEny+OP/5k9UxZVw9YFWGj7eI4KR/iOBqCg=
 github.com/emicklei/go-restful/v3 v3.11.0 h1:rAQeMHw1c7zTmncogyy8VvRZwtkmkZ4FxERmMY4rD+g=
 github.com/emicklei/go-restful/v3 v3.11.0/go.mod h1:6n3XBCmQQb25CM2LCACGz8ukIrRry+4bhvbpWn3mrbc=
+github.com/essentialkaos/translit v2.0.3+incompatible h1:ve7G/7KlwCo4XjWoAgcQC7neTtYcKOVrToYZSffkCAc=
+github.com/essentialkaos/translit v2.0.3+incompatible/go.mod h1:ylbWodNFD51eQ8HNXrNwm+e5DD+rmHwQ5cC5QyPl1lA=
 github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2Wg=
 github.com/felixge/httpsnoop v1.0.4/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=
 github.com/fsnotify/fsevents v0.2.0 h1:BRlvlqjvNTfogHfeBOFvSC9N0Ddy+wzQCQukyoD7o/c=
@@ -176,6 +178,10 @@ github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 h1:Z9n2FFNU
 github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51/go.mod h1:CzGEWj7cYgsdH8dAjBGEr58BoE7ScuLd+fwFZ44+/x8=
 github.com/klauspost/compress v1.17.9 h1:6KIumPrER1LHsvBVuDa0r5xaG0Es51mhhB9BQB2qeMA=
 github.com/klauspost/compress v1.17.9/go.mod h1:Di0epgTjJY877eYKx5yC51cX2A2Vl2ibi7bDH9ttBbw=
+github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=
+github.com/kr/pretty v0.3.1/go.mod h1:hoEshYVHaxMs3cyo3Yncou5ZscifuDolrwPKZanG3xk=
+github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
+github.com/kr/text v0.2.0/go.mod h1:eLer722TekiGuMkidMxC/pM04lWEeraHUUmBw8l2grE=
 github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 h1:6E+4a0GO5zZEnZ81pIr0yLvtUWk2if982qA3F3QD6H4=
@@ -260,6 +266,8 @@ github.com/r3labs/sse v0.0.0-20210224172625-26fe804710bc h1:zAsgcP8MhzAbhMnB1QQ2
 github.com/r3labs/sse v0.0.0-20210224172625-26fe804710bc/go.mod h1:S8xSOnV3CgpNrWd0GQ/OoQfMtlg2uPRSuTzcSGrzwK8=
 github.com/rivo/uniseg v0.2.0 h1:S1pD9weZBuJdFmowNwbpi7BJ8TNftyUImj/0WQi72jY=
 github.com/rivo/uniseg v0.2.0/go.mod h1:J6wj4VEh+S6ZtnVlnTBMWIodfgj8LQOQFoIToxlJtxc=
+github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
+github.com/rogpeppe/go-internal v1.14.1/go.mod h1:MaRKkUm5W0goXpeCfT7UZI6fk/L7L7so1lCWt35ZSgc=
 github.com/secure-systems-lab/go-securesystemslib v0.4.0 h1:b23VGrQhTA8cN2CbBw7/FulN9fTtqYUdS5+Oxzt+DUE=
 github.com/secure-systems-lab/go-securesystemslib v0.4.0/go.mod h1:FGBZgq2tXWICsxWQW1msNf49F0Pf2Op5Htayx335Qbs=
 github.com/serialx/hashring v0.0.0-20200727003509-22c0c7ab6b1b h1:h+3JX2VoWTFuyQEo87pStk/a99dzIO1mM9KxIyLPGTU=
@@ -388,6 +396,8 @@ k8s.io/kube-openapi v0.0.0-20231010175941-2dd684a91f00 h1:aVUu9fTY98ivBPKR9Y5w/A
 k8s.io/kube-openapi v0.0.0-20231010175941-2dd684a91f00/go.mod h1:AsvuZPBlUDVuCdzJ87iajxtXuR9oktsTctW/R9wwouA=
 k8s.io/utils v0.0.0-20230726121419-3b25d923346b h1:sgn3ZU783SCgtaSJjpcVVlRqd6GSnlTLKgpAAttJvpI=
 k8s.io/utils v0.0.0-20230726121419-3b25d923346b/go.mod h1:OLgZIPagt7ERELqWJFomSt595RzquPNLL48iOWgYOg0=
+pkg.re/essentialkaos/check.v1 v1.2.0 h1:FN1UEUTQL7nyUng3i7sPY3+73XZPKUgOj2ZoLyhF0/M=
+pkg.re/essentialkaos/check.v1 v1.2.0/go.mod h1:B7CoMnGFRnruw7X2Z45kWNvoCW+5OhUsLUm1EBM1aJs=
 sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd h1:EDPBXCAspyGV4jQlpZSudPeMmr1bNJefnuqLsRAsHZo=
 sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd/go.mod h1:B8JuhiUyNFVKdsE8h686QcCxMaH6HrOAZj4vswFpcB0=
 sigs.k8s.io/structured-merge-diff/v4 v4.4.1 h1:150L+0vs/8DA78h1u02ooW1/fFq/Lwr+sGiqlzvrtq4=
