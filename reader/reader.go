@@ -159,20 +159,33 @@ func (rd *Reader) Stop() {
 }
 
 func (rd *Reader) Close() {
-	rd.Lock()
-	defer rd.Unlock()
-
-	if rd.conn == nil {
+	if rd == nil || rd.conn == nil {
 		return
 	}
+
+	rd.Lock()
+	defer rd.Unlock()
 
 	rd.conn.Unsubscribe()
 	Log.MessageWithSource(log.DEBUG, rd.msgSrc, `Unsubscribed`)
 
 	rd.conn.Close()
 	Log.MessageWithSource(log.DEBUG, rd.msgSrc, `Closed`)
+}
 
-	rd.conn = nil
+func (rd *Reader) Reconnect() (err error) {
+	rd.Close()
+
+	if misc.TEST {
+		return
+	}
+
+	err = rd.conn.Reconnect()
+	if err != nil {
+		return
+	}
+
+	return
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -224,7 +237,7 @@ func (rd *Reader) do() {
 			return
 		}
 
-		if err := rd.subscribe(firstTime); err == nil {
+		if err := rd.subscribe(firstTime, false); err == nil {
 			break
 		}
 		firstTime = false
@@ -245,6 +258,8 @@ func (rd *Reader) do() {
 		}
 	}()
 
+	ec := 0
+
 	for misc.AppStarted() && rd.active.Load() {
 		// reading with standard timeout
 		m, err := rd.conn.Read(0)
@@ -262,12 +277,21 @@ func (rd *Reader) do() {
 				fallthrough
 			default:
 				Log.MessageWithSource(log.ERR, rd.msgSrc, "read: %s", err)
-				if err = rd.subscribe(false); err != nil {
+				reconnect := false
+				ec++
+				if ec > rd.kafkaCfg.RetryBeforeReconnect {
+					reconnect = true
+					ec = 0
+				}
+
+				if err = rd.subscribe(false, reconnect); err != nil {
 					Log.MessageWithSource(log.ERR, rd.msgSrc, "subscribe: %s", err)
 				}
 			}
 			continue
 		}
+
+		ec = 0
 
 		if m == nil {
 			// nothing to do
@@ -292,13 +316,26 @@ func (rd *Reader) do() {
 
 //----------------------------------------------------------------------------------------------------------------------------//
 
-func (rd *Reader) subscribe(firstTime bool) (err error) {
+func (rd *Reader) subscribe(firstTime bool, reconnect bool) (err error) {
 	if !firstTime {
-		rd.conn.Unsubscribe()
+		if reconnect {
+			rd.Close()
+		} else {
+			rd.conn.Unsubscribe()
+			Log.MessageWithSource(log.DEBUG, rd.msgSrc, `Unsubscribed`)
+		}
+
 		select {
 		case <-time.After(rd.kafkaCfg.RetryTimeout.D()):
 		case <-rd.ctx.Done():
 			return fmt.Errorf("cancelled")
+		}
+
+		if reconnect {
+			err = rd.Reconnect()
+			if err != nil {
+				return
+			}
 		}
 	}
 

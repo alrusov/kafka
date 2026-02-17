@@ -40,7 +40,8 @@ type (
 
 		Timeout config.Duration `toml:"timeout"` // Таймаут
 
-		RetryTimeout config.Duration `toml:"retry-timeout"` // Таймаут повторной отправки
+		RetryTimeout         config.Duration `toml:"retry-timeout"`          // Таймаут повтора операции
+		RetryBeforeReconnect int             `toml:"retry-before-reconnect"` // Количество ошибок подряд для пересоединения
 
 		MaxRequestSize   int    `toml:"max-request-size"`   // Максимальный размер сообщения
 		ConsumerQueueLen int    `toml:"consumer-queue-len"` // Длина внутренней очереди для консьюмера
@@ -104,6 +105,7 @@ type (
 		cfg             *Config         // Конфигурация
 		timeout         time.Duration   // Таймаут
 		timeoutMS       int             // Таймаут в МИЛЛИСЕКУНДАХ
+		configMap       kafka.ConfigMap // Параметры соединения
 		conn            *kafka.Consumer // Соединение
 		initialAssigned bool            // Получен хотя бы один event AssignedPartitions
 		initialCond     *sync.Cond
@@ -187,6 +189,10 @@ func (c *Config) Check(cfg any) (err error) {
 
 	if c.RetryTimeout <= 0 {
 		c.RetryTimeout = config.ClientDefaultTimeout
+	}
+
+	if c.RetryBeforeReconnect <= 0 {
+		c.RetryBeforeReconnect = 8
 	}
 
 	if c.MaxRequestSize <= 0 {
@@ -367,11 +373,16 @@ func (c *Config) NewAdminEx(extra misc.InterfaceMap) (client *AdminClient, err e
 
 // Закрыть админское соединение
 func (c *AdminClient) Close() {
+	if c == nil || c.conn == nil {
+		return
+	}
+
 	if misc.TEST {
 		return
 	}
 
 	c.conn.Close()
+	c.conn = nil
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -479,11 +490,16 @@ func (c *Config) NewProducerEx(extra misc.InterfaceMap) (client *Producer, err e
 
 // Закрыть продюсерское соединение
 func (c *Producer) Close() {
+	if c == nil || c.conn == nil {
+		return
+	}
+
 	if misc.TEST {
 		return
 	}
 
 	c.conn.Close()
+	c.conn = nil
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -576,9 +592,10 @@ func (c *Config) NewConsumer() (client *Consumer, err error) {
 
 func (c *Config) NewConsumerEx(extra misc.InterfaceMap) (client *Consumer, err error) {
 	conn := (*kafka.Consumer)(nil)
+	configMap := c.makeConfigMap(true, extra)
 
 	if !misc.TEST {
-		conn, err = kafka.NewConsumer(c.makeConfigMap(true, extra))
+		conn, err = kafka.NewConsumer(configMap)
 		if err != nil {
 			return
 		}
@@ -588,6 +605,7 @@ func (c *Config) NewConsumerEx(extra misc.InterfaceMap) (client *Consumer, err e
 		cfg:             c,
 		timeout:         c.Timeout.D(),
 		timeoutMS:       c.timeMS(),
+		configMap:       *configMap,
 		conn:            conn,
 		initialAssigned: false,
 		initialCond:     sync.NewCond(new(sync.Mutex)),
@@ -603,16 +621,36 @@ func (c *Config) NewConsumerEx(extra misc.InterfaceMap) (client *Consumer, err e
 	return
 }
 
+func (c *Consumer) Reconnect() (err error) {
+	if misc.TEST {
+		return
+	}
+
+	c.Close()
+
+	c.conn, err = kafka.NewConsumer(&c.configMap)
+	if err != nil {
+		return
+	}
+
+	return
+}
+
 //----------------------------------------------------------------------------------------------------------------------------//
 
 // Закрыть консьюмерское соединение
 func (c *Consumer) Close() {
+	if c == nil || c.conn == nil {
+		return
+	}
+
 	if misc.TEST {
 		return
 	}
 
 	c.Unsubscribe()
 	c.conn.Close()
+	c.conn = nil
 }
 
 //----------------------------------------------------------------------------------------------------------------------------//
@@ -742,6 +780,10 @@ func (c *Consumer) assignedPartitions(assigned bool, partitions TopicPartitions)
 
 // Отписаться от всех подписок
 func (c *Consumer) Unsubscribe() (err error) {
+	if c == nil || c.conn == nil {
+		return
+	}
+
 	if misc.TEST {
 		return
 	}
